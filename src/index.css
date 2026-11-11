@@ -22,14 +22,14 @@
     overflow: visible !important;
   }
 
-  /* When printing from SK04 modal, hide app shell, navigation, header, and footer */
+  /* When printing from print modal, hide app shell, navigation, header, and footer */
   body.is-printing-sk04 {
     background: #ffffff !important;
   }
 
   body.is-printing-sk04 header,
   body.is-printing-sk04 footer,
-  body.is-printing-sk04 main > div > *:not(.sk04-print-modal),
+  body.is-printing-sk04 main > div > *:not(.sk04-print-modal):not(.a4-print-modal):not(.qr-label-modal),
   body.is-printing-sk04 nav {
     display: none !important;
   }
@@ -45,7 +45,8 @@
 
   /* Break out of modal fixed position & scroll container to allow full multi-page pagination */
   .sk04-print-modal,
-  .qr-label-modal {
+  .qr-label-modal,
+  .a4-print-modal {
     position: static !important;
     top: auto !important;
     left: auto !important;

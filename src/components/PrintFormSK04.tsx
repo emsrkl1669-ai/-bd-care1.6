@@ -69,7 +69,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
   }, [patient.status]);
 
   return (
-    <div className="sk04-print-modal fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4">
+    <div className="a4-print-modal sk04-print-modal fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4">
       {/* Control Bar - Hidden when printing */}
       <div className="no-print w-full max-w-5xl bg-white rounded-xl shadow-2xl p-3 mb-3 sticky top-2 z-50 border border-slate-200">
         <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 border-b border-slate-100">

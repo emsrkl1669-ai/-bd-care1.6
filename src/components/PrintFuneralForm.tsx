@@ -47,7 +47,7 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
   };
 
   return (
-    <div className="sk04-print-modal fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4">
+    <div className="a4-print-modal sk04-print-modal fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4">
       {/* Control Bar - Hidden when printing */}
       <div className="no-print w-full max-w-4xl bg-white rounded-xl shadow-xl p-3 mb-3 sticky top-2 z-50 border border-slate-200">
         <div className="flex flex-wrap items-center justify-between gap-3">

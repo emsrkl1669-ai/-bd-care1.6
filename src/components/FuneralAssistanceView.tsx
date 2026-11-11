@@ -31,6 +31,7 @@ import { formatNationalId, formatPhone, formatThaiDate, formatCurrency } from '.
 import { exportFuneralsToCsv } from '../utils/storage';
 import { FuneralFormModal } from './FuneralFormModal';
 import { PrintFuneralForm } from './PrintFuneralForm';
+import { PrintRosterModal } from './PrintRosterModal';
 
 interface FuneralAssistanceViewProps {
   funerals: FuneralAssistanceRecord[];
@@ -52,6 +53,7 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<FuneralAssistanceRecord | null>(null);
   const [printingRecord, setPrintingRecord] = useState<FuneralAssistanceRecord | null>(null);
+  const [isPrintingRoster, setIsPrintingRoster] = useState(false);
   const [viewingDocsRecord, setViewingDocsRecord] = useState<FuneralAssistanceRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<FuneralAssistanceRecord | null>(null);
 
@@ -139,6 +141,16 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsPrintingRoster(true)}
+            disabled={filteredRecords.length === 0}
+            className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+            title="พิมพ์รายงานสรุปคำร้องอนุเคราะห์เผาศพ ขนาด A4"
+          >
+            <Printer className="w-4 h-4" />
+            <span>พิมพ์รายงาน A4 ({filteredRecords.length})</span>
+          </button>
+
           <button
             onClick={() => exportFuneralsToCsv(funerals)}
             disabled={funerals.length === 0}
@@ -686,6 +698,103 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* A4 Funeral Assistance Summary Report Modal */}
+      {isPrintingRoster && (
+        <PrintRosterModal
+          title="รายงานสรุปคำร้องขอรับการอนุเคราะห์เผาศพ (ฌาปนกิจสงเคราะห์)"
+          subtitle={`สถานะ: ${statusFilter === 'all' ? 'ทุกสถานะคำร้อง' : statusFilter} • มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)`}
+          documentCode="แบบ ฌศ.01-R"
+          items={filteredRecords}
+          itemsPerPage={12}
+          onClose={() => setIsPrintingRoster(false)}
+          summaryItems={[
+            { label: 'คำร้องตามตัวกรอง', value: `${filteredRecords.length} เคส` },
+            { label: 'อนุมัติแล้ว', value: `${filteredRecords.filter(f => f.status === 'approved' || f.status === 'completed').length} เคส` },
+            { label: 'รอพิจารณา', value: `${filteredRecords.filter(f => f.status === 'pending').length} เคส` },
+            { label: 'เงินสงเคราะห์รวม', value: `${formatCurrency(filteredRecords.reduce((s, f) => s + (Number(f.assistanceAmount) || 0), 0))} บ.` },
+            { label: 'อนุเคราะห์หีบศพ', value: `${filteredRecords.filter(f => f.coffinProvided).length} หีบ` },
+            { label: 'ยานพาหนะรับ-ส่ง', value: `${filteredRecords.filter(f => f.transportProvided).length} ครั้ง` },
+          ]}
+          columns={[
+            {
+              header: 'รหัสคำร้อง',
+              width: 'w-24',
+              align: 'center',
+              render: (r) => (
+                <div className="font-mono font-bold text-blue-900 text-[10.5px]">{r.code}</div>
+              ),
+            },
+            {
+              header: 'ผู้เสียชีวิต / อายุ / สาเหตุ',
+              width: 'w-48',
+              render: (r) => (
+                <div>
+                  <div className="font-bold text-slate-900 text-[11px] leading-tight">{r.deceasedTitle}{r.deceasedName} ({r.deceasedAge} ปี)</div>
+                  <div className="text-[9.5px] text-slate-500 font-mono">ปชช: {formatNationalId(r.deceasedNationalId)}</div>
+                  {r.causeOfDeath && <div className="text-[9px] text-slate-600">สาเหตุ: {r.causeOfDeath}</div>}
+                </div>
+              ),
+            },
+            {
+              header: 'ผู้ยื่นคำร้อง (ญาติ) / ติดต่อ',
+              width: 'w-40',
+              render: (r) => (
+                <div className="text-[10px] text-slate-800 leading-tight">
+                  <div className="font-semibold">{r.applicantTitle}{r.applicantName}</div>
+                  <div className="text-slate-500 text-[9px]">ความสัมพันธ์: {r.applicantRelation}</div>
+                  {r.applicantPhone && <div className="font-mono text-[9px] text-slate-600">{formatPhone(r.applicantPhone)}</div>}
+                </div>
+              ),
+            },
+            {
+              header: 'วัดที่จัดพิธี / กำหนดเผา',
+              render: (r) => (
+                <div className="text-[10px] text-slate-800 leading-tight">
+                  <div className="font-bold text-slate-900">{r.templeName}</div>
+                  <div className="text-slate-600 text-[9.5px]">วันเผา: {formatThaiDate(r.cremationDate)}</div>
+                </div>
+              ),
+            },
+            {
+              header: 'เงินสดสงเคราะห์',
+              width: 'w-28',
+              align: 'right',
+              render: (r) => (
+                <div className="font-bold text-slate-900 font-mono text-xs">
+                  {formatCurrency(r.assistanceAmount)} บ.
+                </div>
+              ),
+            },
+            {
+              header: 'สิ่งของ/บริการ',
+              width: 'w-28',
+              render: (r) => (
+                <div className="text-[9.5px] text-slate-700 space-y-0.5">
+                  <div>หีบศพ: <strong className={r.coffinProvided ? 'text-emerald-700' : 'text-slate-400'}>{r.coffinProvided ? '✓ มี' : '-'}</strong></div>
+                  <div>รถรับส่ง: <strong className={r.transportProvided ? 'text-emerald-700' : 'text-slate-400'}>{r.transportProvided ? '✓ มี' : '-'}</strong></div>
+                </div>
+              ),
+            },
+            {
+              header: 'สถานะ',
+              width: 'w-24',
+              align: 'center',
+              render: (r) => (
+                <span className={`text-[9.5px] font-semibold px-2 py-0.5 rounded-full ${
+                  r.status === 'approved' || r.status === 'completed'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : r.status === 'pending'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-red-100 text-red-800'
+                }`}>
+                  {r.status === 'approved' ? 'อนุมัติแล้ว' : r.status === 'completed' ? 'เสร็จสิ้น' : r.status === 'pending' ? 'รอพิจารณา' : 'ไม่อนุมัติ'}
+                </span>
+              ),
+            },
+          ]}
+        />
       )}
     </div>
   );

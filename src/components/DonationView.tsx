@@ -34,6 +34,7 @@ import { exportDonationsToCsv } from '../utils/storage';
 import { formatNationalId, formatPhone, formatThaiDate, formatThaiDateShort } from '../utils/idCard';
 import { DonationFormModal } from './DonationFormModal';
 import { PrintDonationForm } from './PrintDonationForm';
+import { PrintRosterModal } from './PrintRosterModal';
 
 interface DonationViewProps {
   donations: DonationDistributionRecord[];
@@ -53,6 +54,7 @@ export const DonationView: React.FC<DonationViewProps> = ({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<DonationDistributionRecord | null>(null);
   const [printingRecord, setPrintingRecord] = useState<DonationDistributionRecord | null>(null);
+  const [isPrintingRoster, setIsPrintingRoster] = useState(false);
   const [previewingPhoto, setPreviewingPhoto] = useState<string | null>(null);
 
   // Computed Totals & Metrics
@@ -126,14 +128,25 @@ export const DonationView: React.FC<DonationViewProps> = ({
 
         <div className="flex items-center gap-2">
           {donations.length > 0 && (
-            <button
-              onClick={() => exportDonationsToCsv(donations)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition cursor-pointer"
-              title="ส่งออกไฟล์ Excel/CSV พร้อมภาษาไทย UTF-8 BOM"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-              <span>ส่งออก CSV</span>
-            </button>
+            <>
+              <button
+                onClick={() => setIsPrintingRoster(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
+                title="พิมพ์รายงานการส่งมอบสิ่งของบริจาค ขนาด A4"
+              >
+                <Printer className="w-4 h-4" />
+                <span>พิมพ์รายงาน A4 ({filteredDonations.length})</span>
+              </button>
+
+              <button
+                onClick={() => exportDonationsToCsv(donations)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition cursor-pointer"
+                title="ส่งออกไฟล์ Excel/CSV พร้อมภาษาไทย UTF-8 BOM"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                <span>ส่งออก CSV</span>
+              </button>
+            </>
           )}
 
           <button
@@ -563,6 +576,115 @@ export const DonationView: React.FC<DonationViewProps> = ({
             </button>
           </div>
         </div>
+      )}
+
+      {/* A4 Donation Distribution Summary Report Modal */}
+      {isPrintingRoster && (
+        <PrintRosterModal
+          title="รายงานสรุปการส่งมอบสิ่งของบริจาคสงเคราะห์"
+          subtitle={`หมวด: ${filterType === 'individual' ? 'ประชาชนทั่วไป' : filterType === 'government' ? 'หน่วยงานราชการ' : 'ทั้งหมด'} • มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)`}
+          documentCode="แบบ บจ.01-R"
+          items={filteredDonations}
+          itemsPerPage={12}
+          onClose={() => setIsPrintingRoster(false)}
+          summaryItems={[
+            { label: 'บันทึกตามตัวกรอง', value: `${filteredDonations.length} รายการ` },
+            { label: 'น้ำดื่มสิงห์รวม', value: `${filteredDonations.reduce((s, d) => s + (d.waterPacks || 0), 0)} แพ็ค` },
+            { label: 'อาหารแห้งยังชีพ', value: `${filteredDonations.reduce((s, d) => s + (d.dryFoodCount || 0), 0)} ชุด` },
+            { label: 'ข้าวสารรวม', value: `${filteredDonations.reduce((s, d) => s + (d.riceBags || 0), 0)} ถุง (${filteredDonations.reduce((s, d) => s + (d.riceBags || 0), 0) * 5} กก.)` },
+            { label: 'ผ้าอ้อม/แพมเพิส', value: `${filteredDonations.reduce((s, d) => s + (d.diaperPacks || 0), 0)} ห่อ` },
+          ]}
+          columns={[
+            {
+              header: 'รหัสบันทึก',
+              width: 'w-24',
+              align: 'center',
+              render: (d) => (
+                <div className="font-mono font-bold text-blue-900 text-[10.5px]">{d.code}</div>
+              ),
+            },
+            {
+              header: 'วันที่ส่งมอบ',
+              width: 'w-24',
+              align: 'center',
+              render: (d) => (
+                <div className="text-[10px] text-slate-700 font-mono">{formatThaiDateShort(d.distributionDate)}</div>
+              ),
+            },
+            {
+              header: 'ผู้รับมอบสิ่งของ (ประชาชน / หน่วยงาน)',
+              width: 'w-52',
+              render: (d) => (
+                <div>
+                  {d.recipientType === 'individual' ? (
+                    <div>
+                      <div className="font-bold text-slate-900 text-[11px] leading-tight">
+                        {d.individualTitle}{d.individualName}
+                      </div>
+                      <div className="text-[9.5px] text-slate-500 font-mono">
+                        ปชช: {formatNationalId(d.individualNationalId || '')}
+                      </div>
+                      {d.individualPhone && <div className="text-[9px] text-slate-600 font-mono">{formatPhone(d.individualPhone)}</div>}
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="font-bold text-slate-900 text-[11px] leading-tight">{d.agencyName}</div>
+                      <div className="text-[9.5px] text-slate-600">ผู้แทน: {d.agencyContactPerson} ({d.agencyContactPosition || '-'})</div>
+                      {d.agencyPhone && <div className="text-[9px] text-slate-500 font-mono">{formatPhone(d.agencyPhone)}</div>}
+                    </div>
+                  )}
+                </div>
+              ),
+            },
+            {
+              header: 'สิ่งของที่ส่งมอบ',
+              render: (d) => (
+                <div className="text-[9.5px] text-slate-700 space-y-0.5">
+                  {d.waterPacks > 0 && <span className="mr-1.5">• น้ำ {d.waterPacks} {d.waterUnit || 'แพ็ค'}</span>}
+                  {d.dryFoodCount > 0 && <span className="mr-1.5">• อาหารแห้ง {d.dryFoodCount} {d.dryFoodUnit || 'ชุด'}</span>}
+                  {d.riceBags > 0 && <span className="mr-1.5 font-semibold text-slate-900">• ข้าวสาร {d.riceBags} ถุง ({(d.riceBags * 5).toLocaleString()} กก.)</span>}
+                  {d.diaperPacks > 0 && <span className="font-semibold text-blue-900">• แพมเพิส {d.diaperPacks} ห่อ</span>}
+                  {d.otherItems && d.otherItems.length > 0 && (
+                    <div className="text-[9px] text-slate-500">
+                      • อื่นๆ: {d.otherItems.map(i => `${i.name} (${i.quantity} ${i.unit})`).join(', ')}
+                    </div>
+                  )}
+                </div>
+              ),
+            },
+            {
+              header: 'สถานที่ / วิธีส่งมอบ',
+              width: 'w-36',
+              render: (d) => (
+                <div className="text-[9.5px] text-slate-700 leading-tight">
+                  <div className="font-medium text-slate-900">{d.handoverPlace || 'มูลนิธิฯ'}</div>
+                  <div className="text-slate-500 text-[9px]">{d.deliveryMethod || 'รับที่มูลนิธิฯ'}</div>
+                </div>
+              ),
+            },
+            {
+              header: 'ผู้ส่งมอบ',
+              width: 'w-28',
+              render: (d) => (
+                <div className="text-[9.5px] text-slate-700">
+                  {d.officerName || 'นายกริชพิพัฒน์  สลับทอง'}
+                </div>
+              ),
+            },
+            {
+              header: 'สถานะ',
+              width: 'w-20',
+              align: 'center',
+              render: (d) => (
+                <span className={`text-[9.5px] font-semibold px-2 py-0.5 rounded-full ${
+                  d.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {d.status === 'completed' ? 'ส่งมอบแล้ว' : 'รอส่งมอบ'}
+                </span>
+              ),
+            },
+          ]}
+        />
       )}
     </div>
   );

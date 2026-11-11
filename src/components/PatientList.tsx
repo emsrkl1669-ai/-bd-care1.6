@@ -21,6 +21,7 @@ import { PatientRecord, SAMUT_PRAKAN_DISTRICTS, MobilityLevel, PatientStatus, Ad
 import { formatNationalId, formatPhone, formatCurrency, formatThaiDate, formatThaiDateShort } from '../utils/idCard';
 import { PrintFormSK04 } from './PrintFormSK04';
 import { PrintHouseQrLabel } from './PrintHouseQrLabel';
+import { PrintRosterModal, RosterColumn, RosterSummaryItem } from './PrintRosterModal';
 
 interface PatientListProps {
   patients: PatientRecord[];
@@ -46,6 +47,7 @@ export const PatientList: React.FC<PatientListProps> = ({
   // Print modals
   const [printingFormPatient, setPrintingFormPatient] = useState<PatientRecord | null>(null);
   const [printingLabelPatient, setPrintingLabelPatient] = useState<PatientRecord | null>(null);
+  const [isPrintingRoster, setIsPrintingRoster] = useState(false);
 
   // Archive modal
   const [archiveTarget, setArchiveTarget] = useState<PatientRecord | null>(null);
@@ -133,31 +135,42 @@ export const PatientList: React.FC<PatientListProps> = ({
             </button>
           </div>
 
-          {/* View Mode Switcher */}
-          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
+          {/* View Mode Switcher & A4 Print Button */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
+              <button
+                onClick={() => setViewMode('table')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition cursor-pointer ${
+                  viewMode === 'table'
+                    ? 'bg-white text-blue-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="มุมมองตารางภาพรวม (เห็นข้อมูลทั้งหมดในหน้าเดียว)"
+              >
+                <List className="w-3.5 h-3.5" />
+                <span>ตาราง</span>
+              </button>
+              <button
+                onClick={() => setViewMode('cards')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition cursor-pointer ${
+                  viewMode === 'cards'
+                    ? 'bg-white text-blue-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="มุมมองการ์ด (Card View)"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>การ์ด</span>
+              </button>
+            </div>
+
             <button
-              onClick={() => setViewMode('table')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition cursor-pointer ${
-                viewMode === 'table'
-                  ? 'bg-white text-blue-700 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-              title="มุมมองตารางภาพรวม (เห็นข้อมูลทั้งหมดในหน้าเดียว)"
+              onClick={() => setIsPrintingRoster(true)}
+              className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
+              title="พิมพ์รายงานบัญชีรายชื่อผู้ป่วย A4"
             >
-              <List className="w-3.5 h-3.5" />
-              <span>ตารางภาพรวม</span>
-            </button>
-            <button
-              onClick={() => setViewMode('cards')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition cursor-pointer ${
-                viewMode === 'cards'
-                  ? 'bg-white text-blue-700 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-              title="มุมมองการ์ด (Card View)"
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>การ์ด</span>
+              <Printer className="w-3.5 h-3.5" />
+              <span>พิมพ์รายงาน A4 ({filteredPatients.length})</span>
             </button>
           </div>
         </div>
@@ -635,6 +648,96 @@ export const PatientList: React.FC<PatientListProps> = ({
         <PrintHouseQrLabel
           patient={printingLabelPatient}
           onClose={() => setPrintingLabelPatient(null)}
+        />
+      )}
+
+      {/* A4 Patient Roster Report Modal */}
+      {isPrintingRoster && (
+        <PrintRosterModal
+          title="รายงานบัญชีรายชื่อผู้ป่วยในโครงการใจถึงใจช่วยผู้ป่วยติดเตียงและยากไร้"
+          subtitle={`สายส่งมอบ: ${selectedDistrict === 'all' ? 'ทุกอำเภอในจังหวัดสมุทรปราการ' : 'อำเภอ' + selectedDistrict} • สถานะ: ${statusTab === 'active' ? 'ในโครงการ' : statusTab === 'pending' ? 'รอพิจารณา' : 'ทั้งหมด'}`}
+          documentCode="แบบ สค.04-R"
+          items={filteredPatients}
+          itemsPerPage={12}
+          onClose={() => setIsPrintingRoster(false)}
+          summaryItems={[
+            { label: 'ผู้ป่วยตามตัวกรอง', value: `${filteredPatients.length} ราย` },
+            { label: 'ติดเตียง 100%', value: `${filteredPatients.filter(p => p.mobilityLevel === 'bedridden').length} ราย` },
+            { label: 'กึ่งติดเตียง', value: `${filteredPatients.filter(p => p.mobilityLevel === 'semi_bedridden').length} ราย` },
+            { label: 'เงินสงเคราะห์รวม', value: `${formatCurrency(filteredPatients.reduce((s, p) => s + (p.helpCashEnabled ? p.helpCashAmount : 0), 0))} บ.` },
+            { label: 'ข้าวสารรวม (5 กก.)', value: `${filteredPatients.reduce((s, p) => s + (p.helpRicePacks || 0), 0)} ถุง` },
+            { label: 'น้ำดื่มสิงห์รวม', value: `${filteredPatients.reduce((s, p) => s + (p.helpWaterPacks || 0), 0)} แพ็ค` },
+          ]}
+          columns={[
+            {
+              header: 'รหัสโครงการ',
+              width: 'w-24',
+              align: 'center',
+              render: (p) => (
+                <div className="font-mono font-bold text-blue-900 text-[10.5px]">{p.code}</div>
+              ),
+            },
+            {
+              header: 'ชื่อ-สกุล / เลข ปชช.',
+              width: 'w-44',
+              render: (p) => (
+                <div>
+                  <div className="font-bold text-slate-900 text-[11px] leading-tight">{p.title}{p.fullName}</div>
+                  <div className="font-mono text-[9.5px] text-slate-500">{formatNationalId(p.nationalId)}</div>
+                </div>
+              ),
+            },
+            {
+              header: 'ระดับเจ็บป่วย',
+              width: 'w-20',
+              align: 'center',
+              render: (p) => (
+                <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-800">
+                  {p.mobilityLevel === 'bedridden' ? 'ติดเตียง' : p.mobilityLevel === 'semi_bedridden' ? 'กึ่งติดเตียง' : 'พอเดินได้'}
+                </span>
+              ),
+            },
+            {
+              header: 'ที่อยู่ (สมุทรปราการ)',
+              render: (p) => (
+                <div className="text-[10px] text-slate-800 leading-tight">
+                  เลขที่ {p.currentAddress.houseNo} {p.currentAddress.buildingVillage && `(${p.currentAddress.buildingVillage})`} ต.{p.currentAddress.subdistrict} อ.{p.currentAddress.district}
+                </div>
+              ),
+            },
+            {
+              header: 'สิ่งของสงเคราะห์ประจำเดือน',
+              width: 'w-52',
+              render: (p) => (
+                <div className="text-[9.5px] text-slate-700 space-y-0.5">
+                  {p.helpCashEnabled && <span className="font-bold text-emerald-800 mr-1.5">• เงิน {formatCurrency(p.helpCashAmount)} บ.</span>}
+                  <span>• ข้าว {p.helpRicePacks || 0} ถุง</span>
+                  {p.helpWaterPacks > 0 && <span className="ml-1">• น้ำ {p.helpWaterPacks} พ. ({p.helpWaterSize === '600ML' ? '600M' : '1.5L'})</span>}
+                  {p.helpDiaperSize !== 'NONE' && <span className="ml-1 font-semibold text-blue-900">• แพมเพิส {p.helpDiaperSize} ({p.helpDiaperPacks} ห่อ)</span>}
+                </div>
+              ),
+            },
+            {
+              header: 'ผู้ดูแล / ติดต่อ',
+              width: 'w-28',
+              render: (p) => (
+                <div className="text-[9.5px] text-slate-700 leading-tight">
+                  <div>{p.caregiverName || '-'}</div>
+                  {p.caregiverPhone && <div className="font-mono text-slate-500">{formatPhone(p.caregiverPhone)}</div>}
+                </div>
+              ),
+            },
+            {
+              header: 'รับเข้าโครงการ',
+              width: 'w-20',
+              align: 'center',
+              render: (p) => (
+                <div className="text-[9.5px] text-slate-600 font-mono">
+                  {formatThaiDateShort(p.admissionDate)}
+                </div>
+              ),
+            },
+          ]}
         />
       )}
     </div>

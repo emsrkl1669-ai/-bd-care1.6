@@ -12,8 +12,9 @@ import {
   FileText 
 } from 'lucide-react';
 import { PatientRecord, PatientStatus, AdminUser } from '../types';
-import { formatNationalId, formatThaiDate } from '../utils/idCard';
+import { formatNationalId, formatThaiDate, formatThaiDateShort } from '../utils/idCard';
 import { PrintFormSK04 } from './PrintFormSK04';
+import { PrintRosterModal } from './PrintRosterModal';
 
 interface ArchiveViewProps {
   patients: PatientRecord[];
@@ -29,6 +30,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'deceased' | 'moved' | 'rejected'>('all');
   const [printingPatient, setPrintingPatient] = useState<PatientRecord | null>(null);
+  const [isPrintingRoster, setIsPrintingRoster] = useState(false);
 
   // Filter archived patients
   const archivedPatients = patients.filter((p) =>
@@ -70,39 +72,51 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           </p>
         </div>
 
-        {/* Status Category Pills */}
-        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+        {/* Status Category Pills & Print Button */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+            <button
+              onClick={() => setFilterType('all')}
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                filterType === 'all' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              ทั้งหมด ({archivedPatients.length})
+            </button>
+            <button
+              onClick={() => setFilterType('deceased')}
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                filterType === 'deceased' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              ถึงแก่กรรม ({archivedPatients.filter((p) => p.status === 'deceased').length})
+            </button>
+            <button
+              onClick={() => setFilterType('moved')}
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                filterType === 'moved' ? 'bg-blue-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              ย้ายที่อยู่ ({archivedPatients.filter((p) => p.status === 'moved').length})
+            </button>
+            <button
+              onClick={() => setFilterType('rejected')}
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                filterType === 'rejected' ? 'bg-red-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              ไม่ผ่าน ({archivedPatients.filter((p) => p.status === 'rejected').length})
+            </button>
+          </div>
+
           <button
-            onClick={() => setFilterType('all')}
-            className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-              filterType === 'all' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
+            onClick={() => setIsPrintingRoster(true)}
+            disabled={displayedPatients.length === 0}
+            className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+            title="พิมพ์รายงานสรุปคลังประวัติผู้ป่วย ขนาด A4"
           >
-            ทั้งหมด ({archivedPatients.length})
-          </button>
-          <button
-            onClick={() => setFilterType('deceased')}
-            className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-              filterType === 'deceased' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            ถึงแก่กรรม ({archivedPatients.filter((p) => p.status === 'deceased').length})
-          </button>
-          <button
-            onClick={() => setFilterType('moved')}
-            className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-              filterType === 'moved' ? 'bg-blue-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            ย้ายที่อยู่ ({archivedPatients.filter((p) => p.status === 'moved').length})
-          </button>
-          <button
-            onClick={() => setFilterType('rejected')}
-            className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-              filterType === 'rejected' ? 'bg-red-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            ไม่ผ่านโครงการ ({archivedPatients.filter((p) => p.status === 'rejected').length})
+            <Printer className="w-4 h-4" />
+            <span>พิมพ์รายงาน A4 ({displayedPatients.length})</span>
           </button>
         </div>
       </div>
@@ -206,6 +220,84 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         <PrintFormSK04
           patient={printingPatient}
           onClose={() => setPrintingPatient(null)}
+        />
+      )}
+
+      {/* A4 Archive Summary Report Modal */}
+      {isPrintingRoster && (
+        <PrintRosterModal
+          title="รายงานประวัติผู้ป่วยจำหน่าย / ถึงแก่กรรม / ย้ายที่อยู่ (คลังประวัติ)"
+          subtitle={`หมวด: ${filterType === 'all' ? 'ทั้งหมด' : filterType === 'deceased' ? 'ถึงแก่กรรม' : filterType === 'moved' ? 'ย้ายที่อยู่' : 'ไม่ผ่านโครงการ'} • มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)`}
+          documentCode="แบบ สค.04-ARCHIVE"
+          items={displayedPatients}
+          itemsPerPage={12}
+          onClose={() => setIsPrintingRoster(false)}
+          summaryItems={[
+            { label: 'ผู้ป่วยในคลังประวัติ', value: `${displayedPatients.length} ราย` },
+            { label: 'ถึงแก่กรรม', value: `${displayedPatients.filter(p => p.status === 'deceased').length} ราย` },
+            { label: 'ย้ายที่อยู่', value: `${displayedPatients.filter(p => p.status === 'moved').length} ราย` },
+            { label: 'ไม่ผ่านโครงการ', value: `${displayedPatients.filter(p => p.status === 'rejected').length} ราย` },
+          ]}
+          columns={[
+            {
+              header: 'รหัสผู้ป่วย',
+              width: 'w-24',
+              align: 'center',
+              render: (p) => (
+                <div className="font-mono font-bold text-slate-800 text-[10.5px]">{p.code}</div>
+              ),
+            },
+            {
+              header: 'ชื่อ-นามสกุล / เลข ปชช.',
+              width: 'w-48',
+              render: (p) => (
+                <div>
+                  <div className="font-bold text-slate-900 text-[11px] leading-tight">{p.title}{p.fullName} ({p.age} ปี)</div>
+                  <div className="font-mono text-[9.5px] text-slate-500">ปชช: {formatNationalId(p.nationalId)}</div>
+                </div>
+              ),
+            },
+            {
+              header: 'สถานะจำหน่าย',
+              width: 'w-28',
+              align: 'center',
+              render: (p) => (
+                <span className={`text-[9.5px] font-semibold px-2 py-0.5 rounded-full ${
+                  p.status === 'deceased' ? 'bg-slate-200 text-slate-800' :
+                  p.status === 'moved' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {p.status === 'deceased' ? 'ถึงแก่กรรม' : p.status === 'moved' ? 'ย้ายที่อยู่' : 'ไม่ผ่านโครงการ'}
+                </span>
+              ),
+            },
+            {
+              header: 'สาเหตุและบันทึกการจำหน่าย',
+              render: (p) => (
+                <div className="text-[10px] text-slate-700 leading-tight">
+                  {p.statusReason || '-'}
+                </div>
+              ),
+            },
+            {
+              header: 'ที่อยู่เดิม (สมุทรปราการ)',
+              width: 'w-40',
+              render: (p) => (
+                <div className="text-[9.5px] text-slate-600 leading-tight">
+                  ต.{p.currentAddress.subdistrict} อ.{p.currentAddress.district}
+                </div>
+              ),
+            },
+            {
+              header: 'วันที่รับเข้า',
+              width: 'w-20',
+              align: 'center',
+              render: (p) => (
+                <div className="text-[9.5px] text-slate-600 font-mono">
+                  {formatThaiDateShort(p.admissionDate)}
+                </div>
+              ),
+            },
+          ]}
         />
       )}
     </div>
