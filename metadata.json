@@ -1,0 +1,9 @@
+{
+  "name": "BD-Care โครงการใจถึงใจ มูลนิธิร่วมกุศลสมุทรปราการ",
+  "description": "ระบบสำรวจและบันทึกข้อมูลผู้ป่วยติดเตียงและยากไร้ มูลนิธิร่วมกุศลสมุทรปราการ แบบ สค.04 พร้อมพิกัด GPS, QR Code และ AI ประเมิน",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

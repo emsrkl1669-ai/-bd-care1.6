@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Prompt', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #1e293b;
+    background-color: #f8fafc;
+  }
+}
+
+/* Print specific styles for แบบ สค.04 (3 pages) and House Labels */
+@media print {
+  html, body {
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Sarabun', 'Prompt', sans-serif !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 210mm !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* When printing from SK04 modal, hide app shell, navigation, header, and footer */
+  body.is-printing-sk04 {
+    background: #ffffff !important;
+  }
+
+  body.is-printing-sk04 header,
+  body.is-printing-sk04 footer,
+  body.is-printing-sk04 main > div > *:not(.sk04-print-modal),
+  body.is-printing-sk04 nav {
+    display: none !important;
+  }
+
+  /* Also hide any element marked no-print */
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* Break out of modal fixed position & scroll container to allow full multi-page pagination */
+  .sk04-print-modal,
+  .qr-label-modal {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    width: 100% !important;
+    min-width: 210mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    z-index: auto !important;
+    box-shadow: none !important;
+  }
+
+  /* Reset container transform so CSS page breaks work properly */
+  .a4-container {
+    transform: none !important;
+    -webkit-transform: none !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    width: 210mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    display: block !important;
+  }
+
+  /* Force all 3 sheets to be visible when printing, regardless of preview tab */
+  .a4-sheet {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    width: 210mm !important;
+    height: 297mm !important;
+    min-height: 297mm !important;
+    max-height: 297mm !important;
+    margin: 0 auto !important;
+    padding: 12mm 14mm !important;
+    box-sizing: border-box !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    page-break-before: auto !important;
+    page-break-after: always !important;
+    page-break-inside: avoid !important;
+    break-before: auto !important;
+    break-after: page !important;
+    break-inside: avoid !important;
+    overflow: hidden !important;
+  }
+
+  /* Prevent trailing blank page after the last sheet */
+  .a4-sheet:last-of-type,
+  .a4-sheet.last-sheet {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  .page-break {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  /* Ensure background colors and borders are printed accurately */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
+@media screen {
+  .print-only {
+    display: none !important;
+  }
+  
+  .a4-sheet {
+    width: 210mm;
+    min-height: 297mm;
+    box-sizing: border-box;
+  }
+}
+
+/* Custom scrollbar for desktop tables and galleries */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
