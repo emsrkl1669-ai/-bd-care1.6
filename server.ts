@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
+import { calculateVulnerabilityAssessment } from './src/utils/assessment.ts';
 
 dotenv.config();
 
@@ -44,17 +45,16 @@ app.get('/api/health', (req, res) => {
 
 // AI Evaluation Endpoint for Social Worker Assessment & Vulnerability Scoring
 app.post('/api/ai/evaluate', async (req, res) => {
-  try {
-    const { patientData, interviewNotes } = req.body;
+  const { patientData, interviewNotes } = req.body;
+  const baseline = calculateVulnerabilityAssessment(patientData || {});
 
+  try {
     if (!ai) {
-      // Fallback response if GEMINI_API_KEY is not configured
+      // Return accurate rule-based calculation if GEMINI_API_KEY is not configured
       return res.json({
         fallback: true,
-        vulnerabilityScore: calculateLocalScore(patientData),
-        summaryOpinion: generateLocalOpinion(patientData),
-        recommendedSupplies: generateLocalSupplies(patientData),
-        missingNotice: 'การวิเคราะห์แบบออฟไลน์/ระบบมาตรฐาน (แนะนำตรวจสอบข้อมูลเอกสารแนบ)',
+        ...baseline,
+        missingNotice: 'การวิเคราะห์ออฟไลน์ตามเกณฑ์มาตรฐานมูลนิธิร่วมกุศลสมุทรปราการ',
       });
     }
 
@@ -71,14 +71,17 @@ ${interviewNotes || 'ไม่มีบันทึกเพิ่มเติ�
 1. เงินสดช่วยเหลือ 1,000 บาท/เดือน (สำหรับครอบครัวยากไร้ รายได้สุทธิติดลบ หรือมีภาระค่าใช้จ่ายสูง)
 2. ผ้าอ้อมผู้ใหญ่ (ไซส์ S, M, L, XL, XXL) และจำนวนห่อ/เดือน (1-3 ห่อ)
 3. ข้าวสาร 5 กก. (จำนวน 2 ถุง/เดือน)
-4. น้ำดื่ม 1.5 ลิตร แพ็ค 6 ขวด (จำนวน 2 แพ็ค/เดือน)
+4. น้ำดื่ม 1.5 ลิตร แพ็ค 6 ขวด หรือ 600 ML แพ็ค 12 ขวด (จำนวน 2 แพ็ค/เดือน)
 5. สิ่งของพิเศษอื่นๆ เช่น แผ่นรองซับ, ที่นอนลมป้องกันแผลกดทับ, รถเข็นวีลแชร์, วอล์คเกอร์, เครื่องดูดเสมหะ
 
-ให้ประเมิน 4 มิติเชิงลึก:
-1. มิติการเคลื่อนไหวและการช่วยเหลือตนเอง (ADL)
-2. มิติภาวะแทรกซ้อนและความรุนแรงของโรค
-3. มิติภาระค่าใช้จ่ายและเศรษฐกิจครัวเรือน
-4. มิติสภาพผู้ดูแลและความพร้อมทางจิตสังคม
+กฎการคำนวณคะแนนความเปราะบาง (สำคัญมาก):
+- ประเมิน 4 มิติเชิงลึก แต่ละมิติมีคะแนน 0 - 25 คะแนน:
+  1. mobilityScore: มิติการเคลื่อนไหวและการช่วยเหลือตนเอง (ADL) (0-25)
+  2. complicationsScore: มิติภาวะแทรกซ้อนและความรุนแรงของโรค (0-25)
+  3. economicScore: มิติภาระค่าใช้จ่ายและเศรษฐกิจครัวเรือน (0-25)
+  4. caregiverScore: มิติสภาพผู้ดูแลและความพร้อมทางจิตสังคม (0-25)
+- ผลรวมคะแนนดัชนีความเปราะบาง (vulnerabilityScore) ต้องมีค่าเท่ากับผลบวกของทั้ง 4 มิติพอดีเป๊ะ (mobilityScore + complicationsScore + economicScore + caregiverScore = vulnerabilityScore)
+- ระดับความเปราะบาง (vulnerabilityLevel): คะแนน >= 80 คือ "เปราะบางสูงมาก (วิกฤต)", คะแนน 50-79 คือ "เปราะบางปานกลาง", ต่ำกว่า 50 คือ "เปราะบางเริ่มต้น"
 
 ตอบกลับเป็น JSON ตาม schema ที่กำหนด`;
 
@@ -90,14 +93,6 @@ ${interviewNotes || 'ไม่มีบันทึกเพิ่มเติ�
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            vulnerabilityScore: {
-              type: Type.INTEGER,
-              description: 'คะแนนดัชนีความเปราะบาง 0 - 100',
-            },
-            vulnerabilityLevel: {
-              type: Type.STRING,
-              description: 'เปราะบางสูงมาก (วิกฤต) / เปราะบางปานกลาง / เปราะบางเริ่มต้น',
-            },
             dimensionScores: {
               type: Type.OBJECT,
               properties: {
@@ -131,8 +126,6 @@ ${interviewNotes || 'ไม่มีบันทึกเพิ่มเติ�
             },
           },
           required: [
-            'vulnerabilityScore',
-            'vulnerabilityLevel',
             'dimensionScores',
             'socialWorkerOpinion',
             'recommendedSupplies',
@@ -142,55 +135,48 @@ ${interviewNotes || 'ไม่มีบันทึกเพิ่มเติ�
     });
 
     const parsed = JSON.parse(response.text || '{}');
-    res.json(parsed);
+    
+    // Enforce exact mathematical integrity for dimension scores and sum
+    const m = Math.min(25, Math.max(0, Number(parsed.dimensionScores?.mobilityScore ?? baseline.dimensionScores.mobilityScore)));
+    const c = Math.min(25, Math.max(0, Number(parsed.dimensionScores?.complicationsScore ?? baseline.dimensionScores.complicationsScore)));
+    const e = Math.min(25, Math.max(0, Number(parsed.dimensionScores?.economicScore ?? baseline.dimensionScores.economicScore)));
+    const cg = Math.min(25, Math.max(0, Number(parsed.dimensionScores?.caregiverScore ?? baseline.dimensionScores.caregiverScore)));
+
+    const exactTotalScore = m + c + e + cg;
+    const exactLevel = exactTotalScore >= 80 ? 'เปราะบางสูงมาก (วิกฤต)' : (exactTotalScore >= 50 ? 'เปราะบางปานกลาง' : 'เปราะบางเริ่มต้น');
+
+    res.json({
+      fallback: false,
+      vulnerabilityScore: exactTotalScore,
+      vulnerabilityLevel: exactLevel,
+      dimensionScores: {
+        mobilityScore: m,
+        complicationsScore: c,
+        economicScore: e,
+        caregiverScore: cg,
+      },
+      socialWorkerOpinion: parsed.socialWorkerOpinion || baseline.socialWorkerOpinion,
+      recommendedSupplies: {
+        helpCashEnabled: parsed.recommendedSupplies?.helpCashEnabled ?? baseline.recommendedSupplies.helpCashEnabled,
+        helpCashAmount: parsed.recommendedSupplies?.helpCashAmount ?? baseline.recommendedSupplies.helpCashAmount,
+        helpDiaperSize: parsed.recommendedSupplies?.helpDiaperSize ?? baseline.recommendedSupplies.helpDiaperSize,
+        helpDiaperPacks: parsed.recommendedSupplies?.helpDiaperPacks ?? baseline.recommendedSupplies.helpDiaperPacks,
+        helpRicePacks: parsed.recommendedSupplies?.helpRicePacks ?? baseline.recommendedSupplies.helpRicePacks,
+        helpWaterSize: patientData?.helpWaterSize || '1.5L',
+        helpWaterPacks: parsed.recommendedSupplies?.helpWaterPacks ?? baseline.recommendedSupplies.helpWaterPacks,
+        otherSupplies: parsed.recommendedSupplies?.otherSupplies ?? baseline.recommendedSupplies.otherSupplies,
+      },
+      aiSuggestions: parsed.missingFieldsAdvice || baseline.aiSuggestions,
+    });
   } catch (error: any) {
-    console.error('Error generating AI evaluation:', error);
-    // Graceful fallback on error
-    const fallbackScore = calculateLocalScore(req.body.patientData);
+    console.error('Error generating AI evaluation, using baseline assessment:', error);
     res.json({
       fallback: true,
       error: error.message,
-      vulnerabilityScore: fallbackScore,
-      socialWorkerOpinion: generateLocalOpinion(req.body.patientData),
-      recommendedSupplies: generateLocalSupplies(req.body.patientData),
+      ...baseline,
     });
   }
 });
-
-function calculateLocalScore(data: any): number {
-  if (!data) return 50;
-  let score = 30;
-  if (data.mobilityLevel === 'bedridden') score += 35;
-  else if (data.mobilityLevel === 'semi_bedridden') score += 20;
-  else score += 10;
-
-  const netIncome = (Number(data.incomeSalary || 0) + Number(data.incomeDisability || 0) + Number(data.incomeElderly || 0) + Number(data.incomeStateWelfare || 0) + Number(data.incomeOther || 0)) - Number(data.monthlyExpense || 0);
-  if (netIncome < 0) score += 20;
-  else if (netIncome < 2000) score += 10;
-
-  if (data.disabilityCard?.hasCard) score += 10;
-  if (data.specialMedicalNeeds && data.specialMedicalNeeds.length > 0) score += 15;
-
-  return Math.min(100, Math.max(10, score));
-}
-
-function generateLocalOpinion(data: any): string {
-  if (!data) return 'เห็นควรพิจารณาให้ความช่วยเหลือตามระเบียบโครงการใจถึงใจ มูลนิธิร่วมกุศลสมุทรปราการ';
-  const mobility = data.mobilityLevel === 'bedridden' ? 'ผู้ป่วยมีภาวะติดเตียง 100% ไม่สามารถช่วยเหลือตนเองได้' : data.mobilityLevel === 'semi_bedridden' ? 'ผู้ป่วยมีภาวะกึ่งติดเตียง จำเป็นต้องมีผู้ดูแลประคับประคอง' : 'ผู้ป่วยพอเดินได้บ้างแต่มีโรคประจำตัวเรื้อรัง';
-  return `จากการลงพื้นที่สำรวจข้อเท็จจริง พบว่า${mobility} ครอบครัวมีภาระค่าใช้จ่ายในการดูแลต่อเนื่องและมีรายได้ไม่เพียงพอต่อค่าครองชีพ เห็นสมควรรับเข้าโครงการ "ใจถึงใจช่วยผู้ป่วยติดเตียงและยากไร้" มูลนิธิร่วมกุศลสมุทรปราการ เพื่อบรรเทาความเดือดร้อนเร่งด่วน`;
-}
-
-function generateLocalSupplies(data: any): any {
-  return {
-    helpCashEnabled: true,
-    helpCashAmount: 1000,
-    helpDiaperSize: data?.helpDiaperSize || 'L',
-    helpDiaperPacks: data?.mobilityLevel === 'bedridden' ? 2 : 1,
-    helpRicePacks: 2,
-    helpWaterPacks: 2,
-    otherSupplies: data?.mobilityLevel === 'bedridden' ? 'แผ่นรองซับสิ่งขับถ่าย' : '-',
-  };
-}
 
 // Start Server or mount Vite
 async function startServer() {

@@ -593,11 +593,16 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
               </div>
             </div>
 
-            {/* Social Worker Opinion */}
-            {patient.socialWorkerOpinion && (
-              <div className="text-[11.5px] mb-2 leading-snug">
-                <span className="font-bold">ความเห็นของเจ้าหน้าที่สังคมสงเคราะห์:</span>{' '}
-                <span>{patient.socialWorkerOpinion}</span>
+            {/* Social Worker Opinion & Vulnerability Score */}
+            {(patient.socialWorkerOpinion || patient.vulnerabilityScore) && (
+              <div className="text-[11px] mb-2 leading-snug bg-slate-50/70 p-2 rounded border border-slate-200">
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="font-bold text-slate-900">การประเมิน 4 มิติ & ความเห็นเจ้าหน้าที่ฝ่ายสังคมสงเคราะห์:</span>
+                  <span className="font-bold text-slate-900 font-mono text-[10.5px]">
+                    ดัชนีความเปราะบาง: {patient.vulnerabilityScore}/100 ({patient.vulnerabilityLevel || 'เปราะบางปานกลาง'})
+                  </span>
+                </div>
+                <div className="text-slate-800">{patient.socialWorkerOpinion || 'เห็นสมควรรับเข้าโครงการเพื่อสงเคราะห์สิ่งของยังชีพประจำเดือน'}</div>
               </div>
             )}
           </div>

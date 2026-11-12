@@ -34,6 +34,7 @@ import {
 } from '../types';
 import { formatNationalId, calculateAgeFromBirthDate, formatCurrency, formatThaiDate, formatThaiDateShort, generatePatientCode } from '../utils/idCard';
 import { generateQrCodeDataUrl, makeGoogleMapsUrl } from '../utils/qrcode';
+import { calculateVulnerabilityAssessment, DimensionScores } from '../utils/assessment';
 import { ThaiDateInput } from './ThaiDateInput';
 import { LiveCameraModal } from './LiveCameraModal';
 import { DocumentViewerModal } from './DocumentViewerModal';
@@ -62,8 +63,26 @@ export const PatientForm: React.FC<PatientFormProps> = ({
   // Form State
   const [formData, setFormData] = useState<PatientRecord>(() => {
     if (initialPatient) {
-      return { ...initialPatient };
+      const baseline = calculateVulnerabilityAssessment(initialPatient);
+      const dims = initialPatient.dimensionScores || baseline.dimensionScores;
+      const total = dims.mobilityScore + dims.complicationsScore + dims.economicScore + dims.caregiverScore;
+      const level = total >= 80 ? 'เปราะบางสูงมาก (วิกฤต)' : (total >= 50 ? 'เปราะบางปานกลาง' : 'เปราะบางเริ่มต้น');
+      return { 
+        ...initialPatient,
+        dimensionScores: dims,
+        vulnerabilityScore: total,
+        vulnerabilityLevel: initialPatient.vulnerabilityLevel || level,
+      };
     }
+
+    const initialAssessment = calculateVulnerabilityAssessment({
+      mobilityLevel: 'bedridden',
+      incomeSalary: 0,
+      monthlyExpense: 0,
+      netIncome: 0,
+      caregiverRelation: 'บุตร',
+    });
+
     return {
       id: 'pt_' + Date.now(),
       code: defaultCode,
@@ -126,16 +145,17 @@ export const PatientForm: React.FC<PatientFormProps> = ({
       monthlyExpense: 0,
       netIncome: 0,
       economicNote: '',
-      helpCashEnabled: true,
-      helpCashAmount: 1000,
-      helpDiaperSize: 'L',
-      helpDiaperPacks: 2,
-      helpRicePacks: 2,
+      helpCashEnabled: initialAssessment.recommendedSupplies.helpCashEnabled,
+      helpCashAmount: initialAssessment.recommendedSupplies.helpCashAmount,
+      helpDiaperSize: initialAssessment.recommendedSupplies.helpDiaperSize,
+      helpDiaperPacks: initialAssessment.recommendedSupplies.helpDiaperPacks,
+      helpRicePacks: initialAssessment.recommendedSupplies.helpRicePacks,
       helpWaterSize: '1.5L',
-      helpWaterPacks: 2,
-      helpOtherSupplies: '',
-      vulnerabilityScore: 75,
-      vulnerabilityLevel: 'เปราะบางสูงมาก (วิกฤต)',
+      helpWaterPacks: initialAssessment.recommendedSupplies.helpWaterPacks,
+      helpOtherSupplies: initialAssessment.recommendedSupplies.otherSupplies,
+      vulnerabilityScore: initialAssessment.vulnerabilityScore,
+      vulnerabilityLevel: initialAssessment.vulnerabilityLevel,
+      dimensionScores: initialAssessment.dimensionScores,
       socialWorkerOpinion: '',
       interviewerName: 'นายกริชพิพัฒน์ สลับทอง',
       interviewerPosition: 'เจ้าหน้าที่ฝ่ายสังคมสงเคราะห์',
@@ -273,6 +293,49 @@ export const PatientForm: React.FC<PatientFormProps> = ({
     );
   };
 
+  // Fine-tune dimension scores directly with automatic sum recalculation
+  const updateDimensionScore = (dimension: keyof DimensionScores, value: number) => {
+    const clamped = Math.min(25, Math.max(0, value));
+    setFormData((prev) => {
+      const currentDims = prev.dimensionScores || {
+        mobilityScore: 20,
+        complicationsScore: 15,
+        economicScore: 18,
+        caregiverScore: 15,
+      };
+      const updatedDims = { ...currentDims, [dimension]: clamped };
+      const newTotal = updatedDims.mobilityScore + updatedDims.complicationsScore + updatedDims.economicScore + updatedDims.caregiverScore;
+      const newLevel = newTotal >= 80 ? 'เปราะบางสูงมาก (วิกฤต)' : (newTotal >= 50 ? 'เปราะบางปานกลาง' : 'เปราะบางเริ่มต้น');
+      return {
+        ...prev,
+        dimensionScores: updatedDims,
+        vulnerabilityScore: newTotal,
+        vulnerabilityLevel: newLevel,
+      };
+    });
+  };
+
+  // Instant local recalculation from patient's current form data
+  const handleRecalculateAssessment = () => {
+    const assessment = calculateVulnerabilityAssessment(formData);
+    setFormData((prev) => ({
+      ...prev,
+      vulnerabilityScore: assessment.vulnerabilityScore,
+      vulnerabilityLevel: assessment.vulnerabilityLevel,
+      dimensionScores: assessment.dimensionScores,
+      socialWorkerOpinion: prev.socialWorkerOpinion || assessment.socialWorkerOpinion,
+      aiSuggestions: assessment.aiSuggestions,
+      helpCashEnabled: assessment.recommendedSupplies.helpCashEnabled,
+      helpCashAmount: assessment.recommendedSupplies.helpCashAmount,
+      helpDiaperPacks: assessment.recommendedSupplies.helpDiaperPacks,
+      helpRicePacks: assessment.recommendedSupplies.helpRicePacks,
+      helpWaterPacks: assessment.recommendedSupplies.helpWaterPacks,
+    }));
+    setAiResultNotice(
+      `คำนวณคะแนน 4 มิติสำเร็จ: รวม ${assessment.vulnerabilityScore}/100 คะแนน (${assessment.dimensionScores.mobilityScore} + ${assessment.dimensionScores.complicationsScore} + ${assessment.dimensionScores.economicScore} + ${assessment.dimensionScores.caregiverScore}) ระดับ${assessment.vulnerabilityLevel}`
+    );
+  };
+
   // Call AI Evaluation
   const handleRunAiEvaluation = async () => {
     setIsAiLoading(true);
@@ -288,15 +351,28 @@ export const PatientForm: React.FC<PatientFormProps> = ({
         }),
       });
 
-      const data = await response.json();
+      let data: any;
+      if (response.ok) {
+        data = await response.json();
+      } else {
+        throw new Error('Server returned ' + response.status);
+      }
+
+      // Ensure exact sum from dimension scores
+      const m = Math.min(25, Math.max(0, Number(data.dimensionScores?.mobilityScore ?? 20)));
+      const c = Math.min(25, Math.max(0, Number(data.dimensionScores?.complicationsScore ?? 15)));
+      const e = Math.min(25, Math.max(0, Number(data.dimensionScores?.economicScore ?? 18)));
+      const cg = Math.min(25, Math.max(0, Number(data.dimensionScores?.caregiverScore ?? 15)));
+      const exactTotal = m + c + e + cg;
+      const exactLevel = exactTotal >= 80 ? 'เปราะบางสูงมาก (วิกฤต)' : (exactTotal >= 50 ? 'เปราะบางปานกลาง' : 'เปราะบางเริ่มต้น');
 
       setFormData((prev) => ({
         ...prev,
-        vulnerabilityScore: data.vulnerabilityScore ?? prev.vulnerabilityScore,
-        vulnerabilityLevel: data.vulnerabilityLevel ?? prev.vulnerabilityLevel,
-        dimensionScores: data.dimensionScores ?? prev.dimensionScores,
+        vulnerabilityScore: exactTotal,
+        vulnerabilityLevel: exactLevel,
+        dimensionScores: { mobilityScore: m, complicationsScore: c, economicScore: e, caregiverScore: cg },
         socialWorkerOpinion: data.socialWorkerOpinion || prev.socialWorkerOpinion,
-        aiSuggestions: data.missingFieldsAdvice || '',
+        aiSuggestions: data.aiSuggestions || data.missingFieldsAdvice || '',
         helpCashEnabled: data.recommendedSupplies?.helpCashEnabled ?? prev.helpCashEnabled,
         helpCashAmount: data.recommendedSupplies?.helpCashAmount ?? prev.helpCashAmount,
         helpDiaperSize: data.recommendedSupplies?.helpDiaperSize ?? prev.helpDiaperSize,
@@ -307,11 +383,30 @@ export const PatientForm: React.FC<PatientFormProps> = ({
       }));
 
       setAiResultNotice(
-        `AI วิเคราะห์สำเร็จ: คะแนนความเปราะบาง ${data.vulnerabilityScore}/100 พร้อมสรุปความเห็นสังคมสงเคราะห์และรายการสิ่งของเรียบร้อยแล้ว`
+        `AI วิเคราะห์และคำนวณคะแนนสำเร็จ: ${exactTotal}/100 คะแนน (${m} + ${c} + ${e} + ${cg}) ระดับ${exactLevel}`
       );
     } catch (err: any) {
-      console.error('AI Error:', err);
-      alert('เกิดข้อผิดพลาดในการเรียก AI ผู้ช่วยสัมภาษณ์');
+      console.warn('AI API call failed, falling back to local exact calculation:', err);
+      // Graceful rule-based exact calculation fallback
+      const localResult = calculateVulnerabilityAssessment(formData);
+      setFormData((prev) => ({
+        ...prev,
+        vulnerabilityScore: localResult.vulnerabilityScore,
+        vulnerabilityLevel: localResult.vulnerabilityLevel,
+        dimensionScores: localResult.dimensionScores,
+        socialWorkerOpinion: prev.socialWorkerOpinion || localResult.socialWorkerOpinion,
+        aiSuggestions: localResult.aiSuggestions,
+        helpCashEnabled: localResult.recommendedSupplies.helpCashEnabled,
+        helpCashAmount: localResult.recommendedSupplies.helpCashAmount,
+        helpDiaperSize: localResult.recommendedSupplies.helpDiaperSize,
+        helpDiaperPacks: localResult.recommendedSupplies.helpDiaperPacks,
+        helpRicePacks: localResult.recommendedSupplies.helpRicePacks,
+        helpWaterPacks: localResult.recommendedSupplies.helpWaterPacks,
+        helpOtherSupplies: localResult.recommendedSupplies.otherSupplies,
+      }));
+      setAiResultNotice(
+        `ระบบคำนวณคะแนนตามเกณฑ์มาตรฐานสำเร็จ: ${localResult.vulnerabilityScore}/100 คะแนน ระดับ${localResult.vulnerabilityLevel}`
+      );
     } finally {
       setIsAiLoading(false);
     }
@@ -1572,92 +1667,197 @@ export const PatientForm: React.FC<PatientFormProps> = ({
         {/* ============================================================== */}
         {/* 7. ระบบผู้ช่วยสัมภาษณ์และประเมินสรุปรายงานอัตโนมัติ (AI Assistant) */}
         {/* ============================================================== */}
-        <div className="bg-gradient-to-br from-indigo-50/80 via-white to-blue-50/80 rounded-xl border-2 border-indigo-200 shadow-sm p-5">
+        {/* ============================================================== */}
+        {/* 7. ระบบผู้ช่วยสัมภาษณ์และประเมินสรุปรายงานอัตโนมัติ (AI Assistant) */}
+        {/* ============================================================== */}
+        <div id="sec-7" className="scroll-mt-28 bg-gradient-to-br from-indigo-50/80 via-white to-blue-50/80 rounded-xl border-2 border-indigo-200 shadow-sm p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between border-b border-indigo-100 pb-3 mb-4 gap-2">
             <div>
               <h3 className="font-bold text-indigo-950 text-base flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center font-bold">7</span>
                 <Sparkles className="w-5 h-5 text-indigo-600" />
-                ระบบผู้ช่วยสัมภาษณ์และประเมินสรุปรายงานอัตโนมัติ (AI Assistant)
+                ระบบประเมินความเปราะบาง 4 มิติ & AI Assistant (แบบ สค.04)
               </h3>
-              <p className="text-xs text-indigo-700">
-                วิเคราะห์ 4 มิติเชิงลึก (การเคลื่อนไหว, ภาวะแทรกซ้อน, ภาระค่าใช้จ่าย, สภาพผู้ดูแล) เพื่อคำนวณคะแนนและเขียนรายงาน สค.04
+              <p className="text-xs text-indigo-700 mt-0.5">
+                คำนวณคะแนนดัชนีความเปราะบาง (Vulnerability Index 0-100) ถูกต้องตามผลรวม 4 มิติเชิงลึก พร้อมร่างความเห็นนักสังคมสงเคราะห์
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={handleRunAiEvaluation}
-              disabled={isAiLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-md transition cursor-pointer disabled:opacity-50"
-            >
-              {isAiLoading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  กำลังประเมินด้วย AI...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  🤖 ให้ AI สรุปรายงานและคำนวณคะแนนในคลิกเดียว
-                </>
-              )}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRecalculateAssessment}
+                className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
+                title="คำนวณคะแนนใหม่ตามข้อมูลที่กรอกในข้อ 1-6"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-indigo-600" />
+                <span>คำนวณคะแนนตามข้อมูลจริง</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRunAiEvaluation}
+                disabled={isAiLoading}
+                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-md transition cursor-pointer disabled:opacity-50"
+              >
+                {isAiLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>กำลังประเมินด้วย AI...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <span>🤖 ให้ AI สรุปรายงานและประเมินเชิงลึก</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {aiResultNotice && (
-            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-lg text-xs flex items-center gap-2">
+            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-lg text-xs flex items-center gap-2 shadow-2xs">
               <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>{aiResultNotice}</span>
+              <span className="font-medium">{aiResultNotice}</span>
             </div>
           )}
 
+          {/* Mathematical Formula Banner */}
+          <div className="mb-4 p-2.5 bg-indigo-100/60 border border-indigo-200 rounded-lg text-xs flex flex-wrap items-center justify-between gap-2 text-indigo-950 font-medium">
+            <div className="flex items-center gap-1.5">
+              <span className="font-bold">สูตรคำนวณคะแนน:</span>
+              <span>มิติที่ 1 ({formData.dimensionScores?.mobilityScore ?? 0})</span>
+              <span>+</span>
+              <span>มิติที่ 2 ({formData.dimensionScores?.complicationsScore ?? 0})</span>
+              <span>+</span>
+              <span>มิติที่ 3 ({formData.dimensionScores?.economicScore ?? 0})</span>
+              <span>+</span>
+              <span>มิติที่ 4 ({formData.dimensionScores?.caregiverScore ?? 0})</span>
+            </div>
+            <div className="font-bold text-indigo-900 bg-white px-2.5 py-0.5 rounded border border-indigo-200 font-mono">
+              = รวม {formData.vulnerabilityScore} / 100 คะแนน
+            </div>
+          </div>
+
           {/* Vulnerability Score Card & Dimensions */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
+            {/* Left: Overall Score Card */}
             <div className="md:col-span-4 bg-white p-4 rounded-xl border border-indigo-200 shadow-xs flex flex-col items-center justify-center text-center">
               <div className="text-xs font-bold text-slate-600 mb-1">
                 ดัชนีคะแนนความเปราะบาง (Vulnerability Score)
               </div>
-              <div className="text-4xl font-black text-indigo-600 my-1">
+              <div className="text-4xl font-black text-indigo-600 my-1 font-mono">
                 {formData.vulnerabilityScore}
                 <span className="text-base font-normal text-slate-400">/100</span>
               </div>
-              <span className={`text-xs px-3 py-1 rounded-full font-bold ${
-                formData.vulnerabilityScore >= 80 ? 'bg-red-100 text-red-800' :
-                formData.vulnerabilityScore >= 50 ? 'bg-amber-100 text-amber-800' :
-                'bg-emerald-100 text-emerald-800'
-              }`}>
-                {formData.vulnerabilityLevel || 'เปราะบางสูงมาก (วิกฤต)'}
-              </span>
+              <div className="mt-1">
+                <span className={`inline-block text-xs px-3 py-1 rounded-full font-bold shadow-2xs ${
+                  formData.vulnerabilityScore >= 80 ? 'bg-red-100 text-red-800 border border-red-200' :
+                  formData.vulnerabilityScore >= 50 ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                  'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                }`}>
+                  {formData.vulnerabilityLevel || 'เปราะบางปานกลาง'}
+                </span>
+              </div>
+              <div className="mt-3 text-[10px] text-slate-500 space-y-0.5 border-t border-slate-100 pt-2 w-full text-left">
+                <div className="flex justify-between"><span>🔴 วิกฤต (ช่วยเหลือเร่งด่วน):</span> <span className="font-mono font-bold">80 - 100</span></div>
+                <div className="flex justify-between"><span>🟡 ปานกลาง (เฝ้าระวัง):</span> <span className="font-mono font-bold">50 - 79</span></div>
+                <div className="flex justify-between"><span>🟢 เริ่มต้น (ติดตาม):</span> <span className="font-mono font-bold">0 - 49</span></div>
+              </div>
             </div>
 
-            <div className="md:col-span-8 bg-white p-4 rounded-xl border border-indigo-200 shadow-xs space-y-2">
-              <div className="text-xs font-bold text-slate-700 mb-2">
-                การประเมิน 4 มิติเชิงลึก:
+            {/* Right: 4 Dimensions Grid with interactive sliders */}
+            <div className="md:col-span-8 bg-white p-4 rounded-xl border border-indigo-200 shadow-xs space-y-3">
+              <div className="text-xs font-bold text-slate-700 flex items-center justify-between border-b border-slate-100 pb-1.5">
+                <span>คะแนนรายมิติเชิงลึก (ปรับแต่งได้มิติละ 0 - 25 คะแนน):</span>
+                <span className="text-[11px] text-indigo-600 font-semibold font-mono">
+                  รวม: {(formData.dimensionScores?.mobilityScore ?? 0) + (formData.dimensionScores?.complicationsScore ?? 0) + (formData.dimensionScores?.economicScore ?? 0) + (formData.dimensionScores?.caregiverScore ?? 0)} / 100
+                </span>
               </div>
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                  <div className="font-semibold text-slate-700">1. การเคลื่อนไหว & ADL</div>
-                  <div className="text-blue-700 font-bold mt-0.5">
-                    {formData.dimensionScores?.mobilityScore ?? 25} / 25 คะแนน
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                {/* Dim 1: Mobility */}
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800">1. การเคลื่อนไหว & ADL</span>
+                    <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                      {formData.dimensionScores?.mobilityScore ?? 22} / 25
+                    </span>
                   </div>
+                  <div className="text-[10px] text-slate-500">
+                    สภาพ: {formData.mobilityLevel === 'bedridden' ? 'ติดเตียง 100%' : formData.mobilityLevel === 'semi_bedridden' ? 'กึ่งติดเตียง' : 'พอเดินได้'}
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="25"
+                    value={formData.dimensionScores?.mobilityScore ?? 22}
+                    onChange={(e) => updateDimensionScore('mobilityScore', parseInt(e.target.value) || 0)}
+                    className="w-full accent-blue-600 cursor-pointer"
+                  />
                 </div>
-                <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                  <div className="font-semibold text-slate-700">2. ภาวะแทรกซ้อน & อาการ</div>
-                  <div className="text-red-700 font-bold mt-0.5">
-                    {formData.dimensionScores?.complicationsScore ?? 23} / 25 คะแนน
+
+                {/* Dim 2: Complications */}
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800">2. ภาวะแทรกซ้อน & อาการ</span>
+                    <span className="font-mono font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded border border-red-200">
+                      {formData.dimensionScores?.complicationsScore ?? 15} / 25
+                    </span>
                   </div>
+                  <div className="text-[10px] text-slate-500 truncate">
+                    โรค: {formData.chronicDiseases || 'ไม่มีระบุ'}
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="25"
+                    value={formData.dimensionScores?.complicationsScore ?? 15}
+                    onChange={(e) => updateDimensionScore('complicationsScore', parseInt(e.target.value) || 0)}
+                    className="w-full accent-red-600 cursor-pointer"
+                  />
                 </div>
-                <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                  <div className="font-semibold text-slate-700">3. ความยากไร้ & เศรษฐกิจ</div>
-                  <div className="text-amber-700 font-bold mt-0.5">
-                    {formData.dimensionScores?.economicScore ?? 24} / 25 คะแนน
+
+                {/* Dim 3: Economics */}
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800">3. ความยากไร้ & เศรษฐกิจ</span>
+                    <span className="font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                      {formData.dimensionScores?.economicScore ?? 20} / 25
+                    </span>
                   </div>
+                  <div className="text-[10px] text-slate-500">
+                    รายได้สุทธิ: <strong className={formData.netIncome < 0 ? 'text-red-600' : 'text-slate-700'}>{formatCurrency(formData.netIncome)} บ./เดือน</strong>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="25"
+                    value={formData.dimensionScores?.economicScore ?? 20}
+                    onChange={(e) => updateDimensionScore('economicScore', parseInt(e.target.value) || 0)}
+                    className="w-full accent-amber-600 cursor-pointer"
+                  />
                 </div>
-                <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                  <div className="font-semibold text-slate-700">4. สภาพผู้ดูแล & สังคม</div>
-                  <div className="text-emerald-700 font-bold mt-0.5">
-                    {formData.dimensionScores?.caregiverScore ?? 20} / 25 คะแนน
+
+                {/* Dim 4: Caregiver */}
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800">4. สภาพผู้ดูแล & สังคม</span>
+                    <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      {formData.dimensionScores?.caregiverScore ?? 14} / 25
+                    </span>
                   </div>
+                  <div className="text-[10px] text-slate-500 truncate">
+                    ผู้ดูแล: {formData.caregiverName || '-'} ({formData.caregiverRelation || '-'})
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="25"
+                    value={formData.dimensionScores?.caregiverScore ?? 14}
+                    onChange={(e) => updateDimensionScore('caregiverScore', parseInt(e.target.value) || 0)}
+                    className="w-full accent-emerald-600 cursor-pointer"
+                  />
                 </div>
               </div>
             </div>
