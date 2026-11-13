@@ -224,12 +224,12 @@ export function PrintRosterModal<T>({
           return (
             <div
               key={pageIdx}
-              className={`a4-sheet bg-white text-slate-900 shadow-2xl relative flex flex-col justify-between p-5 sm:py-[11mm] sm:px-[13mm] border border-slate-300 font-['Sarabun',sans-serif] ${
+              className={`a4-sheet a4-sheet-compact bg-white text-slate-900 shadow-2xl relative flex flex-col justify-between p-4 sm:py-[8mm] sm:px-[10mm] border border-slate-300 font-['Sarabun',sans-serif] ${
                 isHiddenOnScreen ? 'hidden print:flex' : 'flex'
               } ${isLastPage ? 'last-sheet' : ''}`}
             >
               {/* Top Section */}
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {/* Official Foundation Header */}
                 <div className="flex items-start justify-between border-b-2 border-slate-900 pb-2.5">
                   <div className="flex items-center gap-3">
@@ -279,7 +279,7 @@ export function PrintRosterModal<T>({
 
                 {/* Data Table */}
                 <div className="border border-slate-900 rounded overflow-hidden">
-                  <table className="w-full text-left border-collapse text-[10.5px]">
+                  <table className="w-full text-left border-collapse text-[10px] leading-[1.3]">
                     <thead>
                       <tr className="bg-slate-900 text-white font-bold text-center border-b border-slate-900">
                         <th className="p-1.5 w-10 border-r border-slate-700">ลำดับ</th>
@@ -330,7 +330,7 @@ export function PrintRosterModal<T>({
               </div>
 
               {/* Bottom Section: Official Signatures on Last Page (or compact on each) */}
-              <div className="mt-4 pt-2.5 border-t-2 border-slate-900 space-y-2">
+              <div className="mt-2.5 pt-2 border-t-2 border-slate-900 space-y-1.5 signature-block-keep">
                 {isLastPage ? (
                   <div className="grid grid-cols-2 gap-8 text-center">
                     {/* Left: Officer Signature */}
