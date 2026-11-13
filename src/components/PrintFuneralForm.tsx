@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Printer, 
   X, 
@@ -46,7 +47,7 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
     window.print();
   };
 
-  return (
+  return createPortal(
     <div className="a4-print-modal sk04-print-modal fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4">
       {/* Control Bar - Hidden when printing */}
       <div className="no-print w-full max-w-4xl bg-white rounded-xl shadow-xl p-3 mb-3 sticky top-2 z-50 border border-slate-200">
@@ -139,7 +140,7 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
         }}
       >
         {/* A4 Page: ใบคำร้องขอรับการอนุเคราะห์เผาศพ */}
-        <div className="a4-sheet bg-white text-black shadow-2xl rounded-xs p-6 sm:p-[14mm] border border-slate-300 relative font-['Sarabun',sans-serif] flex flex-col justify-between">
+        <div className="a4-sheet bg-white text-black shadow-2xl rounded-xs p-6 sm:py-[11mm] sm:px-[13mm] border border-slate-300 relative font-['Sarabun',sans-serif] flex flex-col justify-between">
           <div>
             {/* Header with Organization Logo & Title */}
             <div className="flex items-center justify-between border-b-2 border-slate-900 pb-2 mb-3">
@@ -369,6 +370,7 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

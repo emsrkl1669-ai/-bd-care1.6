@@ -22,6 +22,7 @@ import { formatNationalId, formatPhone, formatCurrency, formatThaiDate, formatTh
 import { PrintFormSK04 } from './PrintFormSK04';
 import { PrintHouseQrLabel } from './PrintHouseQrLabel';
 import { PrintRosterModal, RosterColumn, RosterSummaryItem } from './PrintRosterModal';
+import { useUiFeedback } from './UiFeedback';
 
 interface PatientListProps {
   patients: PatientRecord[];
@@ -38,6 +39,7 @@ export const PatientList: React.FC<PatientListProps> = ({
   onAddNew,
   currentAdmin,
 }) => {
+  const { showToast } = useUiFeedback();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDistrict, setSelectedDistrict] = useState<string>('all');
   const [selectedMobility, setSelectedMobility] = useState<string>('all');
@@ -88,7 +90,7 @@ export const PatientList: React.FC<PatientListProps> = ({
   const handleConfirmArchive = () => {
     if (!archiveTarget) return;
     if (!archiveReason.trim()) {
-      alert('กรุณาระบุเหตุผล เช่น ผู้ป่วยถึงแก่กรรมอย่างสงบ หรือ ย้ายที่อยู่ไปอยู่กับบุตร');
+      showToast('กรุณาระบุเหตุผล เช่น ผู้ป่วยถึงแก่กรรมอย่างสงบ หรือ ย้ายที่อยู่ไปอยู่กับบุตร', 'warning');
       return;
     }
     onArchivePatient(archiveTarget.id, archiveStatusType, archiveReason.trim());
@@ -658,7 +660,7 @@ export const PatientList: React.FC<PatientListProps> = ({
           subtitle={`สายส่งมอบ: ${selectedDistrict === 'all' ? 'ทุกอำเภอในจังหวัดสมุทรปราการ' : 'อำเภอ' + selectedDistrict} • สถานะ: ${statusTab === 'active' ? 'ในโครงการ' : statusTab === 'pending' ? 'รอพิจารณา' : 'ทั้งหมด'}`}
           documentCode="แบบ สค.04-R"
           items={filteredPatients}
-          itemsPerPage={12}
+          itemsPerPage={9}
           onClose={() => setIsPrintingRoster(false)}
           summaryItems={[
             { label: 'ผู้ป่วยตามตัวกรอง', value: `${filteredPatients.length} ราย` },

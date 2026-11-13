@@ -22,11 +22,12 @@
     overflow: visible !important;
   }
 
-  /* When printing from print modal, hide app shell, navigation, header, and footer */
+  /* When printing from portaled print modal, hide app root shell cleanly */
   body.is-printing-sk04 {
     background: #ffffff !important;
   }
 
+  body.is-printing-sk04 > #root,
   body.is-printing-sk04 header,
   body.is-printing-sk04 footer,
   body.is-printing-sk04 main > div > *:not(.sk04-print-modal):not(.a4-print-modal):not(.qr-label-modal),
@@ -52,15 +53,15 @@
     left: auto !important;
     right: auto !important;
     bottom: auto !important;
-    width: 100% !important;
+    width: 210mm !important;
     min-width: 210mm !important;
     height: auto !important;
     min-height: 0 !important;
     max-height: none !important;
     overflow: visible !important;
-    background: transparent !important;
+    background: #ffffff !important;
     backdrop-filter: none !important;
-    margin: 0 !important;
+    margin: 0 auto !important;
     padding: 0 !important;
     display: block !important;
     z-index: auto !important;
@@ -78,32 +79,33 @@
     min-height: 0 !important;
     max-height: none !important;
     display: block !important;
+    gap: 0 !important;
   }
 
-  /* Force all 3 sheets to be visible when printing, regardless of preview tab */
+  /* Force all sheets to print at standardized A4 portrait dimensions without clipping signatures */
   .a4-sheet {
     display: flex !important;
     flex-direction: column !important;
     justify-content: space-between !important;
     width: 210mm !important;
-    height: 297mm !important;
     min-height: 297mm !important;
-    max-height: 297mm !important;
+    height: auto !important;
     margin: 0 auto !important;
-    padding: 12mm 14mm !important;
+    padding: 11mm 13mm !important;
     box-sizing: border-box !important;
     box-shadow: none !important;
     border: none !important;
     border-radius: 0 !important;
     background: #ffffff !important;
     color: #000000 !important;
+    font-family: 'Sarabun', 'Prompt', sans-serif !important;
     page-break-before: auto !important;
     page-break-after: always !important;
     page-break-inside: avoid !important;
     break-before: auto !important;
     break-after: page !important;
     break-inside: avoid !important;
-    overflow: hidden !important;
+    overflow: visible !important;
   }
 
   /* Prevent trailing blank page after the last sheet */

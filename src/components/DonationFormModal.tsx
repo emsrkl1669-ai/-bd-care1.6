@@ -30,6 +30,8 @@ import {
 } from '../types';
 import { formatNationalId, formatPhone } from '../utils/idCard';
 import { ThaiDateInput } from './ThaiDateInput';
+import { getNextDonationCode, processFileForUpload } from '../utils/image';
+import { useUiFeedback } from './UiFeedback';
 
 interface DonationFormModalProps {
   initialRecord: DonationDistributionRecord | null;
@@ -38,6 +40,7 @@ interface DonationFormModalProps {
   onClose: () => void;
   onSave: (record: DonationDistributionRecord) => void;
   existingCount: number;
+  existingCodes?: string[];
 }
 
 export const DonationFormModal: React.FC<DonationFormModalProps> = ({
@@ -47,13 +50,17 @@ export const DonationFormModal: React.FC<DonationFormModalProps> = ({
   onClose,
   onSave,
   existingCount,
+  existingCodes,
 }) => {
+  const { showToast } = useUiFeedback();
   const [formData, setFormData] = useState<Partial<DonationDistributionRecord>>(() => {
     if (initialRecord) return { ...initialRecord };
 
     const currentYear = new Date().getFullYear() + 543;
     const shortYear = currentYear.toString().slice(-2);
-    const code = `บริจาค-${shortYear}-${(existingCount + 1).toString().padStart(3, '0')}`;
+    const code = existingCodes
+      ? getNextDonationCode(existingCodes)
+      : `บริจาค-${shortYear}-${(existingCount + 1).toString().padStart(3, '0')}`;
 
     return {
       id: `donation-${Date.now()}`,
@@ -157,17 +164,16 @@ export const DonationFormModal: React.FC<DonationFormModalProps> = ({
   };
 
   // Upload Photo Handlers
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const dataUrl = event.target?.result as string;
+    for (const file of Array.from(files)) {
+      try {
+        const processed = await processFileForUpload(file, 760000);
         const newPhoto: DonationPhoto = {
           id: `photo-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-          dataUrl,
+          dataUrl: processed.dataUrl,
           caption: 'ภาพถ่ายการรับมอบสิ่งของบริจาค',
           timestamp: new Date().toISOString(),
         };
@@ -175,9 +181,10 @@ export const DonationFormModal: React.FC<DonationFormModalProps> = ({
           ...prev,
           photos: [...(prev.photos || []), newPhoto],
         }));
-      };
-      reader.readAsDataURL(file);
-    });
+      } catch {
+        showToast(`ไม่สามารถอัปโหลดรูปภาพ ${file.name} ได้`, 'error');
+      }
+    }
 
     e.target.value = '';
   };
@@ -190,30 +197,36 @@ export const DonationFormModal: React.FC<DonationFormModalProps> = ({
   };
 
   // Upload Document Handlers
-  const handleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const dataUrl = event.target?.result as string;
+    for (const file of Array.from(files)) {
+      try {
+        const processed = await processFileForUpload(file, 780000);
+        if (processed.tooLargeForCloud) {
+          showToast(
+            `ไฟล์ "${file.name}" มีขนาดใหญ่เกิน ~600KB จึงเก็บในเครื่องได้ชั่วคราวแต่ไม่สามารถซิงค์ขึ้น Cloud ได้`,
+            'warning'
+          );
+        }
         const newDoc: DonationDocument = {
           id: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
           title: file.name,
           fileName: file.name,
-          fileType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
-          dataUrl,
-          fileSize: file.size,
+          fileType: processed.fileType,
+          dataUrl: processed.dataUrl,
+          fileSize: processed.fileSize,
           uploadDate: new Date().toISOString(),
         };
         setFormData((prev) => ({
           ...prev,
           documents: [...(prev.documents || []), newDoc],
         }));
-      };
-      reader.readAsDataURL(file);
-    });
+      } catch {
+        showToast(`ไม่สามารถอ่านไฟล์ ${file.name} ได้`, 'error');
+      }
+    }
 
     e.target.value = '';
   };

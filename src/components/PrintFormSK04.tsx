@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Printer, 
   X, 
@@ -68,7 +69,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
     return null;
   }, [patient.status]);
 
-  return (
+  return createPortal(
     <div className="a4-print-modal sk04-print-modal fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4">
       {/* Control Bar - Hidden when printing */}
       <div className="no-print w-full max-w-5xl bg-white rounded-xl shadow-2xl p-3 mb-3 sticky top-2 z-50 border border-slate-200">
@@ -279,8 +280,8 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
         {/* ============================================================== */}
         {/* PAGE 1: ข้อมูลประวัติผู้ป่วยยากไร้, สภาพเศรษฐกิจ, รายการช่วยเหลือ, ลายเซ็น */}
         {/* ============================================================== */}
-        <div 
-          className={`a4-sheet bg-white text-black shadow-2xl rounded-xs p-6 sm:p-[14mm] border border-slate-300 relative font-['Sarabun',sans-serif] ${
+        <div
+          className={`a4-sheet bg-white text-black shadow-2xl rounded-xs p-5 sm:py-[11mm] sm:px-[13mm] border border-slate-300 relative font-['Sarabun',sans-serif] ${
             activePage !== 'all' && activePage !== 1 ? 'hidden print:flex' : 'flex'
           } flex-col justify-between`}
         >
@@ -310,7 +311,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
 
           <div>
             {/* Header with Organization Logo & Title */}
-            <div className="flex items-center justify-between border-b-2 border-slate-900 pb-2.5 mb-3">
+            <div className="flex items-center justify-between border-b-2 border-slate-900 pb-2 mb-2">
               <div className="flex items-center gap-3">
                 <img
                   src="/assets/aistudio/382492-Photoroom_4c9e02f3.png"
@@ -342,12 +343,12 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
               </div>
             </div>
 
-            <div className="text-center font-bold text-sm mb-2.5 underline underline-offset-4">
+            <div className="text-center font-bold text-sm mb-2 underline underline-offset-4">
               ประวัติผู้ป่วยยากไร้
             </div>
 
             {/* Section 1: Personal Data */}
-            <div className="space-y-1.5 mb-3 text-[12px]">
+            <div className="space-y-1 mb-2 text-[11.5px]">
               <div className="flex items-baseline justify-between">
                 <div>
                   <span className="font-bold">วันที่รับเข้าโครงการ:</span>{' '}
@@ -441,111 +442,111 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
             </div>
 
             {/* Section 2: Economics Table */}
-            <div className="mb-3">
-              <div className="font-bold text-[12px] mb-1">สภาพเศรษฐกิจครอบครัว:</div>
-              <table className="w-full border-collapse border border-slate-900 text-[11.5px]">
+            <div className="mb-2">
+              <div className="font-bold text-[11.5px] mb-1">สภาพเศรษฐกิจครอบครัว:</div>
+              <table className="w-full border-collapse border border-slate-900 text-[11px]">
                 <tbody>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-1 font-medium w-1/2">
+                    <td className="border border-slate-900 px-2 py-[2px] font-medium w-1/2">
                       รายได้ครอบครัวต่อเดือน:
                     </td>
-                    <td className="border border-slate-900 px-2 py-1 text-right font-medium">
+                    <td className="border border-slate-900 px-2 py-[2px] text-right font-medium">
                       {formatCurrency(patient.incomeSalary)} บาท
                     </td>
                   </tr>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-0.5">เบี้ยผู้พิการ:</td>
-                    <td className="border border-slate-900 px-2 py-0.5 text-right">
+                    <td className="border border-slate-900 px-2 py-[2px]">เบี้ยผู้พิการ:</td>
+                    <td className="border border-slate-900 px-2 py-[2px] text-right">
                       {formatCurrency(patient.incomeDisability)} บาท
                     </td>
                   </tr>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-0.5">เบี้ยชราภาพ:</td>
-                    <td className="border border-slate-900 px-2 py-0.5 text-right">
+                    <td className="border border-slate-900 px-2 py-[2px]">เบี้ยชราภาพ:</td>
+                    <td className="border border-slate-900 px-2 py-[2px] text-right">
                       {formatCurrency(patient.incomeElderly)} บาท
                     </td>
                   </tr>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-0.5">บัตรสวัสดิการแห่งรัฐ:</td>
-                    <td className="border border-slate-900 px-2 py-0.5 text-right">
+                    <td className="border border-slate-900 px-2 py-[2px]">บัตรสวัสดิการแห่งรัฐ:</td>
+                    <td className="border border-slate-900 px-2 py-[2px] text-right">
                       {formatCurrency(patient.incomeStateWelfare)} บาท
                     </td>
                   </tr>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-0.5">รายได้อื่นๆ:</td>
-                    <td className="border border-slate-900 px-2 py-0.5 text-right">
+                    <td className="border border-slate-900 px-2 py-[2px]">รายได้อื่นๆ:</td>
+                    <td className="border border-slate-900 px-2 py-[2px] text-right">
                       {formatCurrency(patient.incomeOther)} บาท
                     </td>
                   </tr>
                   {/* รายการสำรวจค่าใช้จ่ายผู้ป่วย & หนี้สิน */}
                   <tr>
-                    <td colSpan={2} className="border border-slate-900 bg-slate-50 px-2 py-0.5 font-bold text-[11px] text-slate-800">
+                    <td colSpan={2} className="border border-slate-900 bg-slate-50 px-2 py-[2px] font-bold text-[10.5px] text-slate-800">
                       รายการสำรวจค่าใช้จ่ายผู้ป่วย & ภาระหนี้สิน:
                     </td>
                   </tr>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-0.5 pl-4 text-slate-700">
+                    <td className="border border-slate-900 px-2 py-[2px] pl-4 text-slate-700">
                       - ค่าเช่าบ้าน / ที่อยู่อาศัย:
                     </td>
-                    <td className="border border-slate-900 px-2 py-0.5 text-right font-medium">
+                    <td className="border border-slate-900 px-2 py-[2px] text-right font-medium">
                       {formatCurrency(patient.expenseRentHouse || 0)} บาท
                     </td>
                   </tr>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-0.5 pl-4 text-slate-700">
+                    <td className="border border-slate-900 px-2 py-[2px] pl-4 text-slate-700">
                       - ค่าเช่าที่ดิน:
                     </td>
-                    <td className="border border-slate-900 px-2 py-0.5 text-right font-medium">
+                    <td className="border border-slate-900 px-2 py-[2px] text-right font-medium">
                       {formatCurrency(patient.expenseRentLand || 0)} บาท
                     </td>
                   </tr>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-0.5 pl-4 text-slate-700">
+                    <td className="border border-slate-900 px-2 py-[2px] pl-4 text-slate-700">
                       - ค่าดำรงชีพ (อาหารและของใช้จำเป็น):
                     </td>
-                    <td className="border border-slate-900 px-2 py-0.5 text-right font-medium">
+                    <td className="border border-slate-900 px-2 py-[2px] text-right font-medium">
                       {formatCurrency(patient.expenseLiving || 0)} บาท
                     </td>
                   </tr>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-0.5 pl-4 text-slate-700">
+                    <td className="border border-slate-900 px-2 py-[2px] pl-4 text-slate-700">
                       - ค่าเดินทาง (แพทย์นัด/ไปโรงพยาบาล):
                     </td>
-                    <td className="border border-slate-900 px-2 py-0.5 text-right font-medium">
+                    <td className="border border-slate-900 px-2 py-[2px] text-right font-medium">
                       {formatCurrency(patient.expenseMedicalTravel || 0)} บาท
                     </td>
                   </tr>
                   <tr>
-                    <td className="border border-slate-900 px-2 py-0.5 pl-4 text-slate-700">
+                    <td className="border border-slate-900 px-2 py-[2px] pl-4 text-slate-700">
                       - หนี้สิน / ภาระหนี้:
                     </td>
-                    <td className="border border-slate-900 px-2 py-0.5 text-right font-medium">
+                    <td className="border border-slate-900 px-2 py-[2px] text-right font-medium">
                       {formatCurrency(patient.expenseDebt || 0)} บาท
                     </td>
                   </tr>
                   {patient.expenseOther ? (
                     <tr>
-                      <td className="border border-slate-900 px-2 py-0.5 pl-4 text-slate-700">
+                      <td className="border border-slate-900 px-2 py-[2px] pl-4 text-slate-700">
                         - ค่าใช้จ่ายอื่นๆ:
                       </td>
-                      <td className="border border-slate-900 px-2 py-0.5 text-right font-medium">
+                      <td className="border border-slate-900 px-2 py-[2px] text-right font-medium">
                         {formatCurrency(patient.expenseOther)} บาท
                       </td>
                     </tr>
                   ) : null}
                   <tr className="bg-red-50/60">
-                    <td className="border border-slate-900 px-2 py-1 font-bold">
+                    <td className="border border-slate-900 px-2 py-[3px] font-bold">
                       รวมค่าใช้จ่ายต่อเดือน:
                     </td>
-                    <td className="border border-slate-900 px-2 py-1 text-right font-bold text-red-700">
+                    <td className="border border-slate-900 px-2 py-[3px] text-right font-bold text-red-700">
                       {formatCurrency(patient.monthlyExpense)} บาท
                     </td>
                   </tr>
                   <tr className="bg-slate-100">
-                    <td className="border border-slate-900 px-2 py-1 font-bold">
+                    <td className="border border-slate-900 px-2 py-[3px] font-bold">
                       รายได้สุทธิประจำเดือน (คำนวณอัตโนมัติ):
                     </td>
-                    <td className={`border border-slate-900 px-2 py-1 text-right font-bold ${netIncome < 0 ? 'text-red-700' : 'text-slate-900'}`}>
+                    <td className={`border border-slate-900 px-2 py-[3px] text-right font-bold ${netIncome < 0 ? 'text-red-700' : 'text-slate-900'}`}>
                       {formatCurrency(netIncome)} บาท {netIncome < 0 ? '(ขาดดุล/ติดลบ)' : ''}
                     </td>
                   </tr>
@@ -559,11 +560,11 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
             </div>
 
             {/* Section 3: Relief Package */}
-            <div className="border border-slate-900 p-2.5 bg-slate-50/50 mb-3 text-[11.5px]">
-              <div className="font-bold text-xs mb-1.5 text-slate-900">
+            <div className="border border-slate-900 p-2 bg-slate-50/50 mb-2 text-[11px]">
+              <div className="font-bold text-xs mb-1 text-slate-900">
                 มูลนิธิร่วมกุศลสมุทรปราการ ให้การช่วยเหลือดังนี้:
               </div>
-              <div className="grid grid-cols-2 gap-y-1.5 gap-x-2">
+              <div className="grid grid-cols-2 gap-y-1 gap-x-2">
                 <div>
                   1. เงินสดช่วยเหลือ:{' '}
                   <span className="font-bold">
@@ -595,10 +596,10 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
 
             {/* Social Worker Opinion & Vulnerability Score */}
             {(patient.socialWorkerOpinion || patient.vulnerabilityScore) && (
-              <div className="text-[11px] mb-2 leading-snug bg-slate-50/70 p-2 rounded border border-slate-200">
+              <div className="text-[10.5px] mb-1.5 leading-snug bg-slate-50/70 p-1.5 rounded border border-slate-200">
                 <div className="flex items-center justify-between mb-0.5">
                   <span className="font-bold text-slate-900">การประเมิน 4 มิติ & ความเห็นเจ้าหน้าที่ฝ่ายสังคมสงเคราะห์:</span>
-                  <span className="font-bold text-slate-900 font-mono text-[10.5px]">
+                  <span className="font-bold text-slate-900 font-mono text-[10px]">
                     ดัชนีความเปราะบาง: {patient.vulnerabilityScore}/100 ({patient.vulnerabilityLevel || 'เปราะบางปานกลาง'})
                   </span>
                 </div>
@@ -608,11 +609,11 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
           </div>
 
           {/* Signatures Section - 3 Officials */}
-          <div className="pt-3 border-t border-slate-300">
-            <div className="grid grid-cols-3 gap-3 text-center text-[11.5px]">
+          <div className="pt-2 border-t border-slate-300">
+            <div className="grid grid-cols-3 gap-3 text-center text-[11px]">
               {/* Interviewer */}
               <div className="flex flex-col items-center">
-                <div className="text-slate-400 mb-4">...................................................</div>
+                <div className="text-slate-400 mb-3">...................................................</div>
                 <div className="font-bold text-slate-900">({patient.interviewerName || 'นายกริชพิพัฒน์ สลับทอง'})</div>
                 <div className="text-slate-600 text-[10.5px]">
                   {patient.interviewerPosition || 'เจ้าหน้าที่ฝ่ายสังคมสงเคราะห์'}
@@ -622,7 +623,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
 
               {/* Approver */}
               <div className="flex flex-col items-center">
-                <div className="text-slate-400 mb-4">...................................................</div>
+                <div className="text-slate-400 mb-3">...................................................</div>
                 <div className="font-bold text-slate-900">({patient.approverName || 'นางสาวศาตพร ภูมิโคกรักษ์'})</div>
                 <div className="text-slate-600 text-[10.5px]">
                   {patient.approverPosition || 'ผู้จัดการมูลนิธิร่วมกุศลสมุทรปราการ'}
@@ -632,7 +633,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
 
               {/* President */}
               <div className="flex flex-col items-center">
-                <div className="text-slate-400 mb-4">...................................................</div>
+                <div className="text-slate-400 mb-3">...................................................</div>
                 <div className="font-bold text-slate-900">({patient.presidentName || 'นายไพวงศ์ ชำนินาวากุล'})</div>
                 <div className="text-slate-600 text-[10.5px]">
                   {patient.presidentPosition || 'ประธานมูลนิธิร่วมกุศลสมุทรปราการ'}
@@ -655,8 +656,8 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
         {/* ============================================================== */}
         {/* PAGE 2: ภาพผู้ป่วย / บ้านผู้ป่วย / พิกัด Google Maps & QR Code */}
         {/* ============================================================== */}
-        <div 
-          className={`a4-sheet bg-white text-black shadow-2xl rounded-xs p-6 sm:p-[14mm] border border-slate-300 relative font-['Sarabun',sans-serif] ${
+        <div
+          className={`a4-sheet bg-white text-black shadow-2xl rounded-xs p-5 sm:py-[11mm] sm:px-[13mm] border border-slate-300 relative font-['Sarabun',sans-serif] ${
             activePage !== 'all' && activePage !== 2 ? 'hidden print:flex' : 'flex'
           } flex-col justify-between`}
         >
@@ -836,8 +837,8 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
         {/* ============================================================== */}
         {/* PAGE 3: เอกสารประกอบของผู้ป่วย (ครบถ้วนสมบูรณ์) */}
         {/* ============================================================== */}
-        <div 
-          className={`a4-sheet bg-white text-black shadow-2xl rounded-xs p-6 sm:p-[14mm] border border-slate-300 relative font-['Sarabun',sans-serif] ${
+        <div
+          className={`a4-sheet bg-white text-black shadow-2xl rounded-xs p-5 sm:py-[11mm] sm:px-[13mm] border border-slate-300 relative font-['Sarabun',sans-serif] ${
             activePage !== 'all' && activePage !== 3 ? 'hidden print:flex' : 'flex'
           } flex-col justify-between`}
         >
@@ -1142,6 +1143,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
         </div>
 
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

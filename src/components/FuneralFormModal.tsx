@@ -29,6 +29,8 @@ import {
 } from '../types';
 import { formatNationalId, formatPhone, formatThaiDateShort } from '../utils/idCard';
 import { ThaiDateInput } from './ThaiDateInput';
+import { getNextFuneralCode, processFileForUpload } from '../utils/image';
+import { useUiFeedback } from './UiFeedback';
 
 interface FuneralFormModalProps {
   initialRecord: FuneralAssistanceRecord | null;
@@ -37,6 +39,7 @@ interface FuneralFormModalProps {
   onClose: () => void;
   onSave: (record: FuneralAssistanceRecord) => void;
   existingCount: number;
+  existingCodes?: string[];
 }
 
 export const FuneralFormModal: React.FC<FuneralFormModalProps> = ({
@@ -46,13 +49,17 @@ export const FuneralFormModal: React.FC<FuneralFormModalProps> = ({
   onClose,
   onSave,
   existingCount,
+  existingCodes,
 }) => {
+  const { showToast } = useUiFeedback();
   const [formData, setFormData] = useState<Partial<FuneralAssistanceRecord>>(() => {
     if (initialRecord) return { ...initialRecord };
-    
+
     const currentYear = new Date().getFullYear() + 543;
     const shortYear = currentYear.toString().slice(-2);
-    const code = `ศพ-${shortYear}-${(existingCount + 1).toString().padStart(3, '0')}`;
+    const code = existingCodes
+      ? getNextFuneralCode(existingCodes)
+      : `ศพ-${shortYear}-${(existingCount + 1).toString().padStart(3, '0')}`;
 
     return {
       id: `funeral-${Date.now()}`,
@@ -108,15 +115,20 @@ export const FuneralFormModal: React.FC<FuneralFormModalProps> = ({
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  // Upload document file handler
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Upload document file handler with automatic compression
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const dataUrl = event.target?.result as string;
+    for (const file of Array.from(files)) {
+      try {
+        const processed = await processFileForUpload(file, 780000);
+        if (processed.tooLargeForCloud) {
+          showToast(
+            `ไฟล์ "${file.name}" มีขนาดใหญ่เกิน ~600KB จึงเก็บในเครื่องได้ชั่วคราวแต่ไม่สามารถซิงค์ขึ้น Cloud ได้`,
+            'warning'
+          );
+        }
         const def = FUNERAL_DOC_DEFINITIONS.find((d) => d.category === targetCategory);
 
         const newDoc: FuneralDocument = {
@@ -124,23 +136,23 @@ export const FuneralFormModal: React.FC<FuneralFormModalProps> = ({
           category: targetCategory,
           title: def ? def.title : file.name,
           fileName: file.name,
-          fileType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
-          dataUrl,
-          fileSize: file.size,
+          fileType: processed.fileType,
+          dataUrl: processed.dataUrl,
+          fileSize: processed.fileSize,
           uploadDate: new Date().toISOString(),
         };
 
         setFormData((prev) => {
-          // Replace if already exists for this single document category or append
           const filtered = (prev.documents || []).filter((d) => d.category !== targetCategory);
           return {
             ...prev,
             documents: [...filtered, newDoc],
           };
         });
-      };
-      reader.readAsDataURL(file);
-    });
+      } catch {
+        showToast(`ไม่สามารถอัปโหลดไฟล์ ${file.name} ได้`, 'error');
+      }
+    }
 
     e.target.value = '';
   };

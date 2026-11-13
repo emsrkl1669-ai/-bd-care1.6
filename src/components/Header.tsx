@@ -1,27 +1,41 @@
 import React, { useState } from 'react';
-import { 
-  Users, 
-  UserPlus, 
-  Package, 
-  BarChart3, 
-  Archive, 
-  Download, 
-  Upload, 
-  FileSpreadsheet, 
-  Wifi, 
-  WifiOff, 
-  ChevronDown, 
-  HeartHandshake, 
-  Trash2, 
-  Lock, 
-  Key, 
-  ShieldCheck, 
-  UserCheck,
-  Gift 
+import { User } from 'firebase/auth';
+import {
+  Users,
+  UserPlus,
+  Package,
+  BarChart3,
+  Archive,
+  Download,
+  Upload,
+  FileSpreadsheet,
+  Wifi,
+  WifiOff,
+  ChevronDown,
+  HeartHandshake,
+  Trash2,
+  Lock,
+  Key,
+  Gift,
+  Cloud,
+  CloudOff,
+  RefreshCw,
 } from 'lucide-react';
-import { ADMIN_USERS, AdminUser, PatientRecord, FuneralAssistanceRecord, DonationDistributionRecord } from '../types';
-import { exportToCsv, exportBackupJson, exportFuneralsToCsv, exportDonationsToCsv } from '../utils/storage';
+import {
+  ADMIN_USERS,
+  AdminUser,
+  PatientRecord,
+  FuneralAssistanceRecord,
+  DonationDistributionRecord,
+} from '../types';
+import {
+  exportToCsv,
+  exportBackupJson,
+  exportFuneralsToCsv,
+  exportDonationsToCsv,
+} from '../utils/storage';
 import { LoginModal } from './LoginModal';
+import { useUiFeedback } from './UiFeedback';
 
 interface HeaderProps {
   currentTab: string;
@@ -32,12 +46,17 @@ interface HeaderProps {
   funerals?: FuneralAssistanceRecord[];
   donations?: DonationDistributionRecord[];
   onImportBackup: (
-    importedPatients: PatientRecord[], 
+    importedPatients: PatientRecord[],
     importedFunerals?: FuneralAssistanceRecord[],
     importedDonations?: DonationDistributionRecord[]
   ) => void;
   onClearAll?: () => void;
   isOnline: boolean;
+  firebaseUser?: User | null;
+  cloudStatus?: 'disconnected' | 'syncing' | 'synced' | 'error';
+  onCloudSignIn?: () => void;
+  onCloudSignOut?: () => void;
+  onManualCloudSync?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -51,15 +70,22 @@ export const Header: React.FC<HeaderProps> = ({
   onImportBackup,
   onClearAll,
   isOnline,
+  firebaseUser = null,
+  cloudStatus = 'disconnected',
+  onCloudSignIn,
+  onCloudSignOut,
+  onManualCloudSync,
 }) => {
+  const { showToast } = useUiFeedback();
   const [isAdminDropdownOpen, setIsAdminDropdownOpen] = useState(false);
   const [isBackupMenuOpen, setIsBackupMenuOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const activePatientsCount = patients.filter((p) => p.status === 'active').length;
-  const archivedCount = patients.filter((p) => ['deceased', 'moved', 'rejected'].includes(p.status)).length;
-  const pendingFuneralsCount = funerals.filter((f) => f.status === 'pending').length;
+  const archivedCount = patients.filter((p) =>
+    ['deceased', 'moved', 'rejected'].includes(p.status)
+  ).length;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -72,15 +98,18 @@ export const Header: React.FC<HeaderProps> = ({
         const parsed = JSON.parse(text);
         if (parsed && Array.isArray(parsed.patients)) {
           onImportBackup(parsed.patients, parsed.funerals, parsed.donations);
-          alert(`นำเข้าข้อมูลสำเร็จ: ผู้ป่วย ${parsed.patients.length} ราย, อนุเคราะห์เผาศพ ${parsed.funerals?.length || 0} ราย, บริจาคสิ่งของ ${parsed.donations?.length || 0} ราย`);
+          showToast(
+            `นำเข้าและผสานข้อมูลสำเร็จ: ผู้ป่วย ${parsed.patients.length} ราย, อนุเคราะห์เผาศพ ${parsed.funerals?.length || 0} ราย, บริจาคสิ่งของ ${parsed.donations?.length || 0} ราย`,
+            'success'
+          );
         } else if (Array.isArray(parsed)) {
           onImportBackup(parsed);
-          alert(`นำเข้าข้อมูลสำเร็จ ${parsed.length} รายการ`);
+          showToast(`นำเข้าและผสานข้อมูลสำเร็จ ${parsed.length} รายการ`, 'success');
         } else {
-          alert('รูปแบบไฟล์ JSON ไม่ถูกต้อง');
+          showToast('รูปแบบไฟล์ JSON ไม่ถูกต้อง', 'error');
         }
-      } catch (err) {
-        alert('เกิดข้อผิดพลาดในการอ่านไฟล์สำรองข้อมูล');
+      } catch {
+        showToast('เกิดข้อผิดพลาดในการอ่านไฟล์สำรองข้อมูล', 'error');
       }
     };
     reader.readAsText(file);
@@ -89,17 +118,15 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="no-print bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
-      {/* Sleek, Compact Unified Bar */}
       <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2.5">
-        
         {/* Brand & Logo */}
-        <div 
+        <div
           onClick={() => setCurrentTab('list')}
           className="flex items-center gap-2.5 cursor-pointer group shrink-0"
         >
-          <img 
-            src="/assets/aistudio/382492-Photoroom_4c9e02f3.png" 
-            alt="ตรามูลนิธิร่วมกุศลสมุทรปราการ" 
+          <img
+            src="/assets/aistudio/382492-Photoroom_4c9e02f3.png"
+            alt="ตรามูลนิธิร่วมกุศลสมุทรปราการ"
             className="w-9 h-9 object-contain drop-shadow-xs group-hover:scale-105 transition-transform"
           />
           <div>
@@ -120,7 +147,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Navigation Tabs - Sleek & Compact */}
+        {/* Navigation Tabs */}
         <nav className="flex items-center gap-1 overflow-x-auto py-0.5">
           <button
             onClick={() => setCurrentTab('list')}
@@ -132,9 +159,11 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Users className="w-3.5 h-3.5" />
             <span>ทะเบียนผู้ป่วย</span>
-            <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-              currentTab === 'list' ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'
-            }`}>
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                currentTab === 'list' ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'
+              }`}
+            >
               {activePatientsCount}
             </span>
           </button>
@@ -162,9 +191,11 @@ export const Header: React.FC<HeaderProps> = ({
             <HeartHandshake className="w-3.5 h-3.5" />
             <span>อนุเคราะห์เผาศพ</span>
             {funerals.length > 0 && (
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                currentTab === 'funerals' ? 'bg-amber-700 text-white' : 'bg-amber-200 text-amber-900'
-              }`}>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                  currentTab === 'funerals' ? 'bg-amber-700 text-white' : 'bg-amber-200 text-amber-900'
+                }`}
+              >
                 {funerals.length}
               </span>
             )}
@@ -181,9 +212,11 @@ export const Header: React.FC<HeaderProps> = ({
             <Gift className="w-3.5 h-3.5" />
             <span>บริจาคสิ่งของ</span>
             {donations.length > 0 && (
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                currentTab === 'donations' ? 'bg-rose-700 text-white' : 'bg-rose-200 text-rose-900'
-              }`}>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                  currentTab === 'donations' ? 'bg-rose-700 text-white' : 'bg-rose-200 text-rose-900'
+                }`}
+              >
                 {donations.length}
               </span>
             )}
@@ -224,22 +257,59 @@ export const Header: React.FC<HeaderProps> = ({
             <Archive className="w-3.5 h-3.5" />
             <span>คลังประวัติ</span>
             {archivedCount > 0 && (
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                currentTab === 'archive' ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'
-              }`}>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                  currentTab === 'archive' ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'
+                }`}
+              >
                 {archivedCount}
               </span>
             )}
           </button>
         </nav>
 
-        {/* Right Controls: Online Status, Admin Login & Switcher, and Backup */}
+        {/* Right Controls: Cloud Sync, Admin Switcher, and Backup */}
         <div className="flex items-center gap-2 shrink-0">
+          {/* Cloud Sync Quick Button */}
+          {firebaseUser ? (
+            <button
+              type="button"
+              onClick={onManualCloudSync}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition cursor-pointer ${
+                cloudStatus === 'syncing'
+                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+                  : cloudStatus === 'error'
+                  ? 'bg-red-50 text-red-700 border-red-200'
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+              }`}
+              title={`บัญชี Cloud: ${firebaseUser.email || ''} • คลิกเพื่อซิงค์ทันที`}
+            >
+              {cloudStatus === 'syncing' ? (
+                <RefreshCw className="w-3 h-3 animate-spin text-blue-600" />
+              ) : (
+                <Cloud className="w-3 h-3 text-emerald-600" />
+              )}
+              <span className="hidden sm:inline">
+                {cloudStatus === 'syncing' ? 'กำลังซิงค์...' : 'Cloud ซิงค์แล้ว'}
+              </span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onCloudSignIn}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition cursor-pointer"
+              title="เชื่อมต่อ Google เพื่อบันทึกข้อมูลถาวรบน Cloud Firestore"
+            >
+              <CloudOff className="w-3 h-3 text-amber-600" />
+              <span className="hidden sm:inline">เชื่อมต่อ Cloud</span>
+            </button>
+          )}
+
           {/* Online badge */}
           <div className="hidden xl:flex items-center text-[11px]">
             {isOnline ? (
               <span className="flex items-center gap-1 text-emerald-700 font-medium bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                <Wifi className="w-3 h-3 text-emerald-600" /> พร้อมซิงค์
+                <Wifi className="w-3 h-3 text-emerald-600" /> ออนไลน์
               </span>
             ) : (
               <span className="flex items-center gap-1 text-amber-800 font-medium bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
@@ -253,7 +323,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={() => setIsAdminDropdownOpen(!isAdminDropdownOpen)}
               className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer border border-slate-200 text-slate-800"
-              title="คลิกเพื่อสลับผู้ดูแลระบบหรือดูข้อมูลรหัสผ่าน"
+              title="คลิกเพื่อสลับผู้ดูแลระบบหรือตั้งค่า Cloud Sync"
             >
               <div className={`w-2 h-2 rounded-full ${currentAdmin.avatarColor}`} />
               <div className="flex flex-col text-left">
@@ -268,7 +338,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             {isAdminDropdownOpen && (
-              <div 
+              <div
                 className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 py-1.5 z-50 text-slate-800"
                 onMouseLeave={() => setIsAdminDropdownOpen(false)}
               >
@@ -284,7 +354,7 @@ export const Header: React.FC<HeaderProps> = ({
                     className="text-[11px] text-blue-600 hover:underline font-bold flex items-center gap-1 cursor-pointer"
                   >
                     <Key className="w-3 h-3" />
-                    <span>ล็อกอินด้วยรหัสผ่าน</span>
+                    <span>ล็อกอิน / Cloud</span>
                   </button>
                 </div>
                 {ADMIN_USERS.map((admin) => (
@@ -300,12 +370,8 @@ export const Header: React.FC<HeaderProps> = ({
                   >
                     <div className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${admin.avatarColor}`} />
                     <div className="min-w-0 flex-1">
-                      <div className="font-bold text-xs text-slate-900">
-                        {admin.name}
-                      </div>
-                      <div className="text-[11px] text-blue-700 font-medium">
-                        {admin.roleTitle}
-                      </div>
+                      <div className="font-bold text-xs text-slate-900">{admin.name}</div>
+                      <div className="text-[11px] text-blue-700 font-medium">{admin.roleTitle}</div>
                       <div className="text-[10px] text-slate-400 font-mono mt-0.5">
                         User: {admin.username} • Pass: {admin.password}
                       </div>
@@ -322,7 +388,7 @@ export const Header: React.FC<HeaderProps> = ({
                     className="w-full py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Lock className="w-3.5 h-3.5" />
-                    <span>เข้าสู่ระบบด้วย Username / Password</span>
+                    <span>เข้าสู่ระบบ & ตั้งค่าซิงค์ Cloud</span>
                   </button>
                 </div>
               </div>
@@ -340,7 +406,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             {isBackupMenuOpen && (
-              <div 
+              <div
                 className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-slate-700"
                 onMouseLeave={() => setIsBackupMenuOpen(false)}
               >
@@ -431,8 +497,8 @@ export const Header: React.FC<HeaderProps> = ({
                     >
                       <Trash2 className="w-4 h-4 text-red-500" />
                       <div>
-                        <div>ลบข้อมูลทั้งหมดในระบบ</div>
-                        <div className="text-[10px] text-red-400">ล้างฐานข้อมูลเพื่อเริ่มใหม่</div>
+                        <div>ล้างข้อมูลในเบราว์เซอร์</div>
+                        <div className="text-[10px] text-red-400">ล้างแคชในเครื่องนี้</div>
                       </div>
                     </button>
                   </>
@@ -448,7 +514,6 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
         </div>
-
       </div>
 
       {/* Login / Switch Account Modal */}
@@ -459,6 +524,11 @@ export const Header: React.FC<HeaderProps> = ({
         onLoginSuccess={(newAdmin) => {
           setCurrentAdmin(newAdmin);
         }}
+        firebaseUser={firebaseUser}
+        cloudStatus={cloudStatus}
+        onCloudSignIn={onCloudSignIn}
+        onCloudSignOut={onCloudSignOut}
+        onManualCloudSync={onManualCloudSync}
       />
     </header>
   );

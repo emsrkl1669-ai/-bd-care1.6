@@ -86,7 +86,7 @@ ${interviewNotes || 'ไม่มีบันทึกเพิ่มเติ�
 ตอบกลับเป็น JSON ตาม schema ที่กำหนด`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -135,15 +135,18 @@ ${interviewNotes || 'ไม่มีบันทึกเพิ่มเติ�
     });
 
     const parsed = JSON.parse(response.text || '{}');
-    
+
     // Enforce exact mathematical integrity for dimension scores and sum
-    const m = Math.min(25, Math.max(0, Number(parsed.dimensionScores?.mobilityScore ?? baseline.dimensionScores.mobilityScore)));
-    const c = Math.min(25, Math.max(0, Number(parsed.dimensionScores?.complicationsScore ?? baseline.dimensionScores.complicationsScore)));
-    const e = Math.min(25, Math.max(0, Number(parsed.dimensionScores?.economicScore ?? baseline.dimensionScores.economicScore)));
-    const cg = Math.min(25, Math.max(0, Number(parsed.dimensionScores?.caregiverScore ?? baseline.dimensionScores.caregiverScore)));
+    const m = Math.round(Math.min(25, Math.max(0, Number(parsed.dimensionScores?.mobilityScore ?? baseline.dimensionScores.mobilityScore))));
+    const c = Math.round(Math.min(25, Math.max(0, Number(parsed.dimensionScores?.complicationsScore ?? baseline.dimensionScores.complicationsScore))));
+    const e = Math.round(Math.min(25, Math.max(0, Number(parsed.dimensionScores?.economicScore ?? baseline.dimensionScores.economicScore))));
+    const cg = Math.round(Math.min(25, Math.max(0, Number(parsed.dimensionScores?.caregiverScore ?? baseline.dimensionScores.caregiverScore))));
 
     const exactTotalScore = m + c + e + cg;
     const exactLevel = exactTotalScore >= 80 ? 'เปราะบางสูงมาก (วิกฤต)' : (exactTotalScore >= 50 ? 'เปราะบางปานกลาง' : 'เปราะบางเริ่มต้น');
+    const validDiaperSizes = ['S', 'M', 'L', 'XL', 'XXL', 'NONE'];
+    const rawDiaper = String(parsed.recommendedSupplies?.helpDiaperSize || '').toUpperCase();
+    const safeDiaperSize = validDiaperSizes.includes(rawDiaper) ? rawDiaper : baseline.recommendedSupplies.helpDiaperSize;
 
     res.json({
       fallback: false,
@@ -158,12 +161,12 @@ ${interviewNotes || 'ไม่มีบันทึกเพิ่มเติ�
       socialWorkerOpinion: parsed.socialWorkerOpinion || baseline.socialWorkerOpinion,
       recommendedSupplies: {
         helpCashEnabled: parsed.recommendedSupplies?.helpCashEnabled ?? baseline.recommendedSupplies.helpCashEnabled,
-        helpCashAmount: parsed.recommendedSupplies?.helpCashAmount ?? baseline.recommendedSupplies.helpCashAmount,
-        helpDiaperSize: parsed.recommendedSupplies?.helpDiaperSize ?? baseline.recommendedSupplies.helpDiaperSize,
-        helpDiaperPacks: parsed.recommendedSupplies?.helpDiaperPacks ?? baseline.recommendedSupplies.helpDiaperPacks,
-        helpRicePacks: parsed.recommendedSupplies?.helpRicePacks ?? baseline.recommendedSupplies.helpRicePacks,
+        helpCashAmount: Number(parsed.recommendedSupplies?.helpCashAmount ?? baseline.recommendedSupplies.helpCashAmount),
+        helpDiaperSize: safeDiaperSize,
+        helpDiaperPacks: Math.max(0, Math.round(Number(parsed.recommendedSupplies?.helpDiaperPacks ?? baseline.recommendedSupplies.helpDiaperPacks))),
+        helpRicePacks: Math.max(0, Math.round(Number(parsed.recommendedSupplies?.helpRicePacks ?? baseline.recommendedSupplies.helpRicePacks))),
         helpWaterSize: patientData?.helpWaterSize || '1.5L',
-        helpWaterPacks: parsed.recommendedSupplies?.helpWaterPacks ?? baseline.recommendedSupplies.helpWaterPacks,
+        helpWaterPacks: Math.max(0, Math.round(Number(parsed.recommendedSupplies?.helpWaterPacks ?? baseline.recommendedSupplies.helpWaterPacks))),
         otherSupplies: parsed.recommendedSupplies?.otherSupplies ?? baseline.recommendedSupplies.otherSupplies,
       },
       aiSuggestions: parsed.missingFieldsAdvice || baseline.aiSuggestions,

@@ -13,6 +13,7 @@ import {
 import { PatientRecord, SAMUT_PRAKAN_DISTRICTS, DiaperSize, MonthlyDelivery, AdminUser } from '../types';
 import { formatCurrency, formatPhone, formatThaiMonthYear } from '../utils/idCard';
 import { PrintDeliveryPlanModal } from './PrintDeliveryPlanModal';
+import { useUiFeedback } from './UiFeedback';
 
 interface DeliveryPlanProps {
   patients: PatientRecord[];
@@ -25,11 +26,15 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
   onRecordDelivery,
   currentAdmin,
 }) => {
+  const { showToast } = useUiFeedback();
   const [selectedDistrict, setSelectedDistrict] = useState<string>('all');
-  const [currentMonth, setCurrentMonth] = useState<string>(() => 
+  const [currentMonth, setCurrentMonth] = useState<string>(() =>
     formatThaiMonthYear(new Date().toISOString().slice(0, 10)) || 'พฤศจิกายน พ.ศ. 2569'
   );
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [deliveringPatient, setDeliveringPatient] = useState<PatientRecord | null>(null);
+  const [receiverInput, setReceiverInput] = useState('');
+  const [receiverRelationInput, setReceiverRelationInput] = useState('ผู้ดูแล');
 
   // Only active patients receive monthly supplies
   const activePatients = patients.filter((p) => p.status === 'active');
@@ -42,8 +47,17 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
     (sum, p) => sum + (p.helpCashEnabled ? p.helpCashAmount : 0),
     0
   );
-  const totalRice = displayedPatients.reduce((sum, p) => sum + p.helpRicePacks, 0);
-  const totalWater = displayedPatients.reduce((sum, p) => sum + p.helpWaterPacks, 0);
+  const totalRice = displayedPatients.reduce((sum, p) => sum + (p.helpRicePacks || 0), 0);
+  const water15LPacks = displayedPatients.reduce(
+    (sum, p) => (p.helpWaterSize === '1.5L' || !p.helpWaterSize ? sum + (p.helpWaterPacks || 0) : sum),
+    0
+  );
+  const water600MLPacks = displayedPatients.reduce(
+    (sum, p) => (p.helpWaterSize === '600ML' ? sum + (p.helpWaterPacks || 0) : sum),
+    0
+  );
+  const totalWater = water15LPacks + water600MLPacks;
+  const totalWaterBottles = water15LPacks * 6 + water600MLPacks * 12;
 
   // Diaper sizes count
   const diaperCounts: Record<DiaperSize, number> = {
@@ -64,30 +78,42 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
     setShowPrintModal(true);
   };
 
-  const handleQuickDeliver = (patient: PatientRecord) => {
-    const receiver = prompt('ชื่อผู้รับมอบสิ่งของ:', patient.caregiverName || patient.fullName);
-    if (!receiver) return;
+  const handleOpenQuickDeliver = (patient: PatientRecord) => {
+    setDeliveringPatient(patient);
+    setReceiverInput(patient.caregiverName || patient.fullName);
+    setReceiverRelationInput(patient.caregiverRelation || 'ผู้ดูแล');
+  };
+
+  const handleConfirmQuickDeliver = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deliveringPatient) return;
+    const trimmedReceiver = receiverInput.trim();
+    if (!trimmedReceiver) {
+      showToast('กรุณาระบุชื่อผู้รับมอบสิ่งของ', 'warning');
+      return;
+    }
 
     const delivery: MonthlyDelivery = {
       id: 'del_' + Date.now(),
       deliveryDate: new Date().toISOString().slice(0, 10),
       monthYearLabel: currentMonth,
-      cashAmount: patient.helpCashEnabled ? patient.helpCashAmount : 0,
-      cashGiven: patient.helpCashEnabled,
-      diaperSize: patient.helpDiaperSize,
-      diaperPacks: patient.helpDiaperPacks,
-      ricePacks: patient.helpRicePacks,
-      waterPacks: patient.helpWaterSize === 'NONE' ? 0 : patient.helpWaterPacks,
-      waterSize: patient.helpWaterSize || '1.5L',
-      otherItems: patient.helpOtherSupplies || '-',
-      receivedBy: receiver,
-      recipientRelation: patient.caregiverRelation || 'ผู้ดูแล',
+      cashAmount: deliveringPatient.helpCashEnabled ? deliveringPatient.helpCashAmount : 0,
+      cashGiven: deliveringPatient.helpCashEnabled,
+      diaperSize: deliveringPatient.helpDiaperSize,
+      diaperPacks: deliveringPatient.helpDiaperPacks,
+      ricePacks: deliveringPatient.helpRicePacks,
+      waterPacks: deliveringPatient.helpWaterSize === 'NONE' ? 0 : deliveringPatient.helpWaterPacks,
+      waterSize: deliveringPatient.helpWaterSize || '1.5L',
+      otherItems: deliveringPatient.helpOtherSupplies || '-',
+      receivedBy: trimmedReceiver,
+      recipientRelation: receiverRelationInput.trim() || 'ผู้ดูแล',
       officerName: currentAdmin.name,
       notes: 'ส่งมอบเรียบร้อยตามมาตรฐานโครงการ',
     };
 
-    onRecordDelivery(patient.id, delivery);
-    alert(`บันทึกการส่งมอบสิ่งของให้ ${patient.fullName} เรียบร้อยแล้ว`);
+    onRecordDelivery(deliveringPatient.id, delivery);
+    showToast(`บันทึกการส่งมอบสิ่งของให้ ${deliveringPatient.fullName} เรียบร้อยแล้ว`, 'success');
+    setDeliveringPatient(null);
   };
 
   return (
@@ -174,11 +200,13 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
         </div>
 
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-          <div className="text-xs text-slate-500 font-medium">น้ำดื่ม 1.5L (แพ็ค 6 ขวด)</div>
+          <div className="text-xs text-slate-500 font-medium">น้ำดื่มสิงห์รวม (1.5L / 600ML)</div>
           <div className="text-2xl font-black text-blue-600 mt-1">
             {totalWater} <span className="text-sm font-normal text-slate-500">แพ็ค</span>
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">({totalWater * 6} ขวด)</div>
+          <div className="text-[11px] text-slate-500 mt-1">
+            1.5L: {water15LPacks} • 600ML: {water600MLPacks} ({totalWaterBottles} ขวด)
+          </div>
         </div>
       </div>
 
@@ -285,7 +313,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
                   <td className="p-3 text-center no-print">
                     <button
                       type="button"
-                      onClick={() => handleQuickDeliver(patient)}
+                      onClick={() => handleOpenQuickDeliver(patient)}
                       className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-semibold transition cursor-pointer flex items-center gap-1 mx-auto"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
@@ -336,6 +364,60 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Quick Delivery Confirmation Dialog */}
+      {deliveringPatient && (
+        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-4 no-print">
+          <form
+            onSubmit={handleConfirmQuickDeliver}
+            className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden"
+          >
+            <div className="bg-emerald-700 text-white px-5 py-3.5">
+              <h3 className="font-bold text-base">บันทึกการส่งมอบสิ่งของประจำเดือน</h3>
+              <p className="text-xs text-emerald-100 mt-0.5">
+                {deliveringPatient.title}{deliveringPatient.fullName} ({deliveringPatient.code})
+              </p>
+            </div>
+            <div className="p-5 space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">ชื่อผู้รับมอบสิ่งของ *</label>
+                <input
+                  type="text"
+                  required
+                  value={receiverInput}
+                  onChange={(e) => setReceiverInput(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">ความสัมพันธ์กับผู้ป่วย</label>
+                <input
+                  type="text"
+                  value={receiverRelationInput}
+                  onChange={(e) => setReceiverRelationInput(e.target.value)}
+                  placeholder="เช่น ผู้ป่วย, บุตร, คู่สมรส, ผู้ดูแล"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+            </div>
+            <div className="bg-slate-50 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeliveringPatient(null)}
+                className="px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg text-xs font-semibold cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+              >
+                ยืนยันบันทึกส่งมอบ
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* A4 Print Modal */}
       {showPrintModal && (

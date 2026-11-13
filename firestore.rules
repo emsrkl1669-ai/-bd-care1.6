@@ -1,0 +1,627 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Global Security Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && request.auth.token.email == 'emsrkl1669@gmail.com';
+    }
+
+    function isStaffAdmin() {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(data) {
+      return isSignedIn() && data.ownerUid == request.auth.uid;
+    }
+
+    function isStr(val, maxLen) {
+      return val is string && val.size() <= maxLen;
+    }
+
+    function isOptStr(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isOptNum(data, field) {
+      return !(field in data) || (data[field] is int || data[field] is float);
+    }
+
+    function isOptBool(data, field) {
+      return !(field in data) || data[field] is bool;
+    }
+
+    // 3. Healthcheck probe (read-only by signed-in users? No: allow authenticated probe or superadmin)
+    // Note: App boot test reads /test/connection only for connectivity verification.
+    match /test/{docId} {
+      allow get: if isSignedIn();
+    }
+
+    // 4. Admin Directory Collection
+    function isValidAdminMember(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == uid &&
+        isStr(data.email, 200) &&
+        isOptStr(data, 'displayName', 200) &&
+        data.role in ['officer', 'approver', 'president', 'superadmin'] &&
+        data.serverCreatedAt is timestamp &&
+        data.serverUpdatedAt is timestamp;
+    }
+
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && isSignedIn() && (request.auth.uid == uid || isSuperAdmin());
+      allow list: if isSuperAdmin();
+      allow create: if isSuperAdmin() &&
+        isValidId(uid) &&
+        isValidAdminMember(incoming(), uid) &&
+        incoming().serverCreatedAt == request.time &&
+        incoming().serverUpdatedAt == request.time;
+      allow update: if isSuperAdmin() &&
+        isValidId(uid) &&
+        isValidAdminMember(incoming(), uid) &&
+        incoming().uid == existing().uid &&
+        incoming().serverCreatedAt == existing().serverCreatedAt &&
+        incoming().serverUpdatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'role', 'serverUpdatedAt']);
+      allow delete: if isSuperAdmin() && isValidId(uid);
+    }
+
+    // 5. Patient Records (แบบ สค.04)
+    function isValidPatientRecord(data, patientId) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'code', 'status', 'fullName',
+          'mobilityLevel', 'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'ownerUid', 'code', 'admissionDate', 'status', 'statusReason', 'statusHistory',
+          'nationalId', 'title', 'fullName', 'birthDate', 'age', 'gender',
+          'phone', 'caregiverName', 'caregiverRelation', 'caregiverPhone',
+          'idAddress', 'isSameAddress', 'currentAddress',
+          'latitude', 'longitude', 'locationAccuracy', 'landmarkNote', 'googleMapsUrl', 'qrCodeDataUrl',
+          'mobilityLevel', 'chronicDiseases', 'symptomsDetail', 'disabilityCard', 'specialNeeds',
+          'familyMembersTotal', 'familyMembersMale', 'familyMembersFemale',
+          'incomeSalary', 'incomeDisability', 'incomeElderly', 'incomeStateWelfare', 'incomeOther',
+          'expenseRentHouse', 'expenseRentLand', 'expenseLiving', 'expenseMedicalTravel', 'expenseDebt', 'expenseOther',
+          'monthlyExpense', 'netIncome', 'economicNote',
+          'helpCashEnabled', 'helpCashAmount', 'helpDiaperSize', 'helpDiaperPacks',
+          'helpRicePacks', 'helpWaterSize', 'helpWaterPacks', 'helpOtherSupplies',
+          'vulnerabilityScore', 'vulnerabilityLevel', 'dimensionScores',
+          'socialWorkerOpinion', 'aiSuggestions',
+          'interviewerName', 'interviewerPosition', 'approverName', 'approverPosition', 'presidentName', 'presidentPosition',
+          'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == patientId &&
+        isValidId(data.ownerUid) &&
+        isStr(data.code, 40) && data.code.size() >= 1 &&
+        data.status in ['active', 'pending', 'deceased', 'moved', 'rejected'] &&
+        isOptStr(data, 'admissionDate', 32) &&
+        isOptStr(data, 'statusReason', 1000) &&
+        (!( 'statusHistory' in data ) || (data.statusHistory is list && data.statusHistory.size() <= 50 && (data.statusHistory.size() == 0 || data.statusHistory[0] is map))) &&
+        isOptStr(data, 'nationalId', 30) &&
+        isOptStr(data, 'title', 30) &&
+        isStr(data.fullName, 200) && data.fullName.size() >= 1 &&
+        isOptStr(data, 'birthDate', 32) &&
+        isOptNum(data, 'age') &&
+        (!( 'gender' in data ) || data.gender in ['ชาย', 'หญิง']) &&
+        isOptStr(data, 'phone', 50) &&
+        isOptStr(data, 'caregiverName', 200) &&
+        isOptStr(data, 'caregiverRelation', 100) &&
+        isOptStr(data, 'caregiverPhone', 50) &&
+        (!( 'idAddress' in data ) || data.idAddress is map) &&
+        isOptBool(data, 'isSameAddress') &&
+        (!( 'currentAddress' in data ) || data.currentAddress is map) &&
+        (!( 'latitude' in data ) || data.latitude == null || data.latitude is int || data.latitude is float) &&
+        (!( 'longitude' in data ) || data.longitude == null || data.longitude is int || data.longitude is float) &&
+        isOptNum(data, 'locationAccuracy') &&
+        isOptStr(data, 'landmarkNote', 1000) &&
+        isOptStr(data, 'googleMapsUrl', 500) &&
+        isOptStr(data, 'qrCodeDataUrl', 40000) &&
+        data.mobilityLevel in ['bedridden', 'semi_bedridden', 'can_walk'] &&
+        isOptStr(data, 'chronicDiseases', 1000) &&
+        isOptStr(data, 'symptomsDetail', 2000) &&
+        (!( 'disabilityCard' in data ) || data.disabilityCard is map) &&
+        (!( 'specialNeeds' in data ) || (data.specialNeeds is list && data.specialNeeds.size() <= 20 && (data.specialNeeds.size() == 0 || data.specialNeeds[0] is string))) &&
+        isOptNum(data, 'familyMembersTotal') &&
+        isOptNum(data, 'familyMembersMale') &&
+        isOptNum(data, 'familyMembersFemale') &&
+        isOptNum(data, 'incomeSalary') &&
+        isOptNum(data, 'incomeDisability') &&
+        isOptNum(data, 'incomeElderly') &&
+        isOptNum(data, 'incomeStateWelfare') &&
+        isOptNum(data, 'incomeOther') &&
+        isOptNum(data, 'expenseRentHouse') &&
+        isOptNum(data, 'expenseRentLand') &&
+        isOptNum(data, 'expenseLiving') &&
+        isOptNum(data, 'expenseMedicalTravel') &&
+        isOptNum(data, 'expenseDebt') &&
+        isOptNum(data, 'expenseOther') &&
+        isOptNum(data, 'monthlyExpense') &&
+        isOptNum(data, 'netIncome') &&
+        isOptStr(data, 'economicNote', 1000) &&
+        isOptBool(data, 'helpCashEnabled') &&
+        isOptNum(data, 'helpCashAmount') &&
+        (!( 'helpDiaperSize' in data ) || data.helpDiaperSize in ['S', 'M', 'L', 'XL', 'XXL', 'NONE']) &&
+        isOptNum(data, 'helpDiaperPacks') &&
+        isOptNum(data, 'helpRicePacks') &&
+        (!( 'helpWaterSize' in data ) || data.helpWaterSize in ['1.5L', '600ML', 'NONE']) &&
+        isOptNum(data, 'helpWaterPacks') &&
+        isOptStr(data, 'helpOtherSupplies', 500) &&
+        isOptNum(data, 'vulnerabilityScore') &&
+        isOptStr(data, 'vulnerabilityLevel', 100) &&
+        (!( 'dimensionScores' in data ) || data.dimensionScores is map) &&
+        isOptStr(data, 'socialWorkerOpinion', 3000) &&
+        isOptStr(data, 'aiSuggestions', 3000) &&
+        isOptStr(data, 'interviewerName', 200) &&
+        isOptStr(data, 'interviewerPosition', 200) &&
+        isOptStr(data, 'approverName', 200) &&
+        isOptStr(data, 'approverPosition', 200) &&
+        isOptStr(data, 'presidentName', 200) &&
+        isOptStr(data, 'presidentPosition', 200) &&
+        isStr(data.createdAt, 64) &&
+        isStr(data.updatedAt, 64) &&
+        data.serverCreatedAt is timestamp &&
+        data.serverUpdatedAt is timestamp;
+    }
+
+    function isValidPatientDelivery(data, patientId, deliveryId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'ownerUid', 'deliveryDate', 'receivedBy', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'patientId', 'ownerUid', 'deliveryDate', 'monthYearLabel',
+          'cashAmount', 'cashGiven', 'diaperSize', 'diaperPacks', 'ricePacks',
+          'waterPacks', 'waterSize', 'otherItems', 'receivedBy', 'recipientRelation',
+          'officerName', 'photoUrl', 'notes', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == deliveryId &&
+        isValidId(data.patientId) &&
+        data.patientId == patientId &&
+        isValidId(data.ownerUid) &&
+        isStr(data.deliveryDate, 32) &&
+        isOptStr(data, 'monthYearLabel', 80) &&
+        isOptNum(data, 'cashAmount') &&
+        isOptBool(data, 'cashGiven') &&
+        (!( 'diaperSize' in data ) || data.diaperSize in ['S', 'M', 'L', 'XL', 'XXL', 'NONE']) &&
+        isOptNum(data, 'diaperPacks') &&
+        isOptNum(data, 'ricePacks') &&
+        isOptNum(data, 'waterPacks') &&
+        (!( 'waterSize' in data ) || data.waterSize in ['1.5L', '600ML', 'NONE']) &&
+        isOptStr(data, 'otherItems', 500) &&
+        isStr(data.receivedBy, 200) &&
+        isOptStr(data, 'recipientRelation', 100) &&
+        isOptStr(data, 'officerName', 200) &&
+        isOptStr(data, 'photoUrl', 500000) &&
+        isOptStr(data, 'notes', 500) &&
+        data.serverCreatedAt is timestamp &&
+        data.serverUpdatedAt is timestamp;
+    }
+
+    function isValidMediaAttachment(data, parentId, mediaId) {
+      return data.keys().hasAll([
+          'id', 'parentId', 'ownerUid', 'kind', 'dataUrl', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'parentId', 'ownerUid', 'kind', 'category', 'title', 'fileName',
+          'fileType', 'dataUrl', 'fileSize', 'caption', 'timestamp', 'uploadDate',
+          'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == mediaId &&
+        isValidId(data.parentId) &&
+        data.parentId == parentId &&
+        isValidId(data.ownerUid) &&
+        data.kind in ['photo', 'document'] &&
+        isOptStr(data, 'category', 64) &&
+        isOptStr(data, 'title', 200) &&
+        isOptStr(data, 'fileName', 255) &&
+        isOptStr(data, 'fileType', 120) &&
+        isStr(data.dataUrl, 850000) &&
+        isOptNum(data, 'fileSize') &&
+        isOptStr(data, 'caption', 500) &&
+        isOptStr(data, 'timestamp', 100) &&
+        isOptStr(data, 'uploadDate', 64) &&
+        data.serverCreatedAt is timestamp &&
+        data.serverUpdatedAt is timestamp;
+    }
+
+    match /patients/{patientId} {
+      allow get: if isValidId(patientId) && (isStaffAdmin() || isOwner(existing()));
+      allow list: if isSignedIn() && (isSuperAdmin() || existing().ownerUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        isValidId(patientId) &&
+        isValidPatientRecord(incoming(), patientId) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().serverCreatedAt == request.time &&
+        incoming().serverUpdatedAt == request.time;
+      allow update: if isSignedIn() &&
+        isValidId(patientId) &&
+        isValidPatientRecord(incoming(), patientId) &&
+        incoming().id == existing().id &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().serverCreatedAt == existing().serverCreatedAt &&
+        incoming().serverUpdatedAt == request.time &&
+        (
+          isSuperAdmin() ||
+          isStaffAdmin() ||
+          (
+            isOwner(existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'code', 'admissionDate', 'status', 'statusReason', 'statusHistory',
+              'nationalId', 'title', 'fullName', 'birthDate', 'age', 'gender',
+              'phone', 'caregiverName', 'caregiverRelation', 'caregiverPhone',
+              'idAddress', 'isSameAddress', 'currentAddress',
+              'latitude', 'longitude', 'locationAccuracy', 'landmarkNote', 'googleMapsUrl', 'qrCodeDataUrl',
+              'mobilityLevel', 'chronicDiseases', 'symptomsDetail', 'disabilityCard', 'specialNeeds',
+              'familyMembersTotal', 'familyMembersMale', 'familyMembersFemale',
+              'incomeSalary', 'incomeDisability', 'incomeElderly', 'incomeStateWelfare', 'incomeOther',
+              'expenseRentHouse', 'expenseRentLand', 'expenseLiving', 'expenseMedicalTravel', 'expenseDebt', 'expenseOther',
+              'monthlyExpense', 'netIncome', 'economicNote',
+              'helpCashEnabled', 'helpCashAmount', 'helpDiaperSize', 'helpDiaperPacks',
+              'helpRicePacks', 'helpWaterSize', 'helpWaterPacks', 'helpOtherSupplies',
+              'vulnerabilityScore', 'vulnerabilityLevel', 'dimensionScores',
+              'socialWorkerOpinion', 'aiSuggestions',
+              'interviewerName', 'interviewerPosition', 'approverName', 'approverPosition', 'presidentName', 'presidentPosition',
+              'updatedAt', 'serverUpdatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(patientId) && (isSuperAdmin() || isOwner(existing()));
+
+      match /deliveries/{deliveryId} {
+        allow get: if isValidId(patientId) && isValidId(deliveryId) && (
+          isStaffAdmin() ||
+          isOwner(existing())
+        );
+        allow list: if isSignedIn() && (isSuperAdmin() || existing().ownerUid == request.auth.uid);
+        allow create: if isSignedIn() &&
+          isValidId(patientId) &&
+          isValidId(deliveryId) &&
+          isValidPatientDelivery(incoming(), patientId, deliveryId) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().serverCreatedAt == request.time &&
+          incoming().serverUpdatedAt == request.time &&
+          exists(/databases/$(database)/documents/patients/$(patientId)) &&
+          (isSuperAdmin() || get(/databases/$(database)/documents/patients/$(patientId)).data.ownerUid == request.auth.uid);
+        allow update: if isSignedIn() &&
+          isValidId(patientId) &&
+          isValidId(deliveryId) &&
+          isValidPatientDelivery(incoming(), patientId, deliveryId) &&
+          incoming().id == existing().id &&
+          incoming().patientId == existing().patientId &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().serverCreatedAt == existing().serverCreatedAt &&
+          incoming().serverUpdatedAt == request.time &&
+          (isSuperAdmin() || (
+            isOwner(existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'receivedBy', 'recipientRelation', 'serverUpdatedAt'])
+          ));
+        allow delete: if isValidId(patientId) && isValidId(deliveryId) && (isSuperAdmin() || isOwner(existing()));
+      }
+
+      match /media/{mediaId} {
+        allow get: if isValidId(patientId) && isValidId(mediaId) && (
+          isStaffAdmin() ||
+          isOwner(existing())
+        );
+        allow list: if isSignedIn() && (isSuperAdmin() || existing().ownerUid == request.auth.uid);
+        allow create: if isSignedIn() &&
+          isValidId(patientId) &&
+          isValidId(mediaId) &&
+          isValidMediaAttachment(incoming(), patientId, mediaId) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().serverCreatedAt == request.time &&
+          incoming().serverUpdatedAt == request.time &&
+          exists(/databases/$(database)/documents/patients/$(patientId)) &&
+          (isSuperAdmin() || get(/databases/$(database)/documents/patients/$(patientId)).data.ownerUid == request.auth.uid);
+        allow update: if isSignedIn() &&
+          isValidId(patientId) &&
+          isValidId(mediaId) &&
+          isValidMediaAttachment(incoming(), patientId, mediaId) &&
+          incoming().id == existing().id &&
+          incoming().parentId == existing().parentId &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().serverCreatedAt == existing().serverCreatedAt &&
+          incoming().serverUpdatedAt == request.time &&
+          (isSuperAdmin() || (
+            isOwner(existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'serverUpdatedAt'])
+          ));
+        allow delete: if isValidId(patientId) && isValidId(mediaId) && (isSuperAdmin() || isOwner(existing()));
+      }
+    }
+
+    // 6. Funeral Assistance Records (แบบ ฌศ.01)
+    function isValidFuneralRecord(data, funeralId) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'code', 'status', 'deceasedName', 'applicantName',
+          'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'ownerUid', 'code', 'applicationDate', 'status', 'statusNote',
+          'deceasedTitle', 'deceasedName', 'deceasedNationalId', 'deceasedAge',
+          'deceasedDeathDate', 'deceasedDeathTime', 'causeOfDeath', 'deathPlace', 'deceasedAddress',
+          'applicantTitle', 'applicantName', 'applicantNationalId', 'applicantPhone',
+          'applicantRelation', 'applicantAddress', 'applicantPovertyReason',
+          'templeName', 'cremationDate', 'cremationTime', 'assistanceAmount',
+          'coffinProvided', 'transportProvided', 'shroudClothProvided', 'otherItems',
+          'officerId', 'officerName', 'officerPosition', 'approverId', 'approverName', 'approverPosition', 'approvalDate',
+          'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == funeralId &&
+        isValidId(data.ownerUid) &&
+        isStr(data.code, 40) && data.code.size() >= 1 &&
+        data.status in ['pending', 'approved', 'completed', 'rejected'] &&
+        isOptStr(data, 'applicationDate', 32) &&
+        isOptStr(data, 'statusNote', 1000) &&
+        isOptStr(data, 'deceasedTitle', 30) &&
+        isStr(data.deceasedName, 200) && data.deceasedName.size() >= 1 &&
+        isOptStr(data, 'deceasedNationalId', 30) &&
+        isOptNum(data, 'deceasedAge') &&
+        isOptStr(data, 'deceasedDeathDate', 32) &&
+        isOptStr(data, 'deceasedDeathTime', 16) &&
+        isOptStr(data, 'causeOfDeath', 500) &&
+        isOptStr(data, 'deathPlace', 300) &&
+        isOptStr(data, 'deceasedAddress', 500) &&
+        isOptStr(data, 'applicantTitle', 30) &&
+        isStr(data.applicantName, 200) && data.applicantName.size() >= 1 &&
+        isOptStr(data, 'applicantNationalId', 30) &&
+        isOptStr(data, 'applicantPhone', 50) &&
+        isOptStr(data, 'applicantRelation', 100) &&
+        isOptStr(data, 'applicantAddress', 500) &&
+        isOptStr(data, 'applicantPovertyReason', 1000) &&
+        isOptStr(data, 'templeName', 300) &&
+        isOptStr(data, 'cremationDate', 32) &&
+        isOptStr(data, 'cremationTime', 16) &&
+        isOptNum(data, 'assistanceAmount') &&
+        isOptBool(data, 'coffinProvided') &&
+        isOptBool(data, 'transportProvided') &&
+        isOptBool(data, 'shroudClothProvided') &&
+        isOptStr(data, 'otherItems', 500) &&
+        isOptStr(data, 'officerId', 128) &&
+        isOptStr(data, 'officerName', 200) &&
+        isOptStr(data, 'officerPosition', 200) &&
+        isOptStr(data, 'approverId', 128) &&
+        isOptStr(data, 'approverName', 200) &&
+        isOptStr(data, 'approverPosition', 200) &&
+        isOptStr(data, 'approvalDate', 32) &&
+        isStr(data.createdAt, 64) &&
+        isStr(data.updatedAt, 64) &&
+        data.serverCreatedAt is timestamp &&
+        data.serverUpdatedAt is timestamp;
+    }
+
+    match /funerals/{funeralId} {
+      allow get: if isValidId(funeralId) && (isStaffAdmin() || isOwner(existing()));
+      allow list: if isSignedIn() && (isSuperAdmin() || existing().ownerUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        isValidId(funeralId) &&
+        isValidFuneralRecord(incoming(), funeralId) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().serverCreatedAt == request.time &&
+        incoming().serverUpdatedAt == request.time;
+      allow update: if isSignedIn() &&
+        isValidId(funeralId) &&
+        isValidFuneralRecord(incoming(), funeralId) &&
+        incoming().id == existing().id &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().serverCreatedAt == existing().serverCreatedAt &&
+        incoming().serverUpdatedAt == request.time &&
+        (
+          isSuperAdmin() ||
+          isStaffAdmin() ||
+          (
+            !(existing().status in ['completed', 'rejected']) &&
+            isOwner(existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'code', 'applicationDate', 'status', 'statusNote',
+              'deceasedTitle', 'deceasedName', 'deceasedNationalId', 'deceasedAge',
+              'deceasedDeathDate', 'deceasedDeathTime', 'causeOfDeath', 'deathPlace', 'deceasedAddress',
+              'applicantTitle', 'applicantName', 'applicantNationalId', 'applicantPhone',
+              'applicantRelation', 'applicantAddress', 'applicantPovertyReason',
+              'templeName', 'cremationDate', 'cremationTime', 'assistanceAmount',
+              'coffinProvided', 'transportProvided', 'shroudClothProvided', 'otherItems',
+              'officerId', 'officerName', 'officerPosition', 'approverId', 'approverName', 'approverPosition', 'approvalDate',
+              'updatedAt', 'serverUpdatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(funeralId) && (isSuperAdmin() || isOwner(existing()));
+
+      match /media/{mediaId} {
+        allow get: if isValidId(funeralId) && isValidId(mediaId) && (
+          isStaffAdmin() ||
+          isOwner(existing())
+        );
+        allow list: if isSignedIn() && (isSuperAdmin() || existing().ownerUid == request.auth.uid);
+        allow create: if isSignedIn() &&
+          isValidId(funeralId) &&
+          isValidId(mediaId) &&
+          isValidMediaAttachment(incoming(), funeralId, mediaId) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().serverCreatedAt == request.time &&
+          incoming().serverUpdatedAt == request.time &&
+          exists(/databases/$(database)/documents/funerals/$(funeralId)) &&
+          (isSuperAdmin() || get(/databases/$(database)/documents/funerals/$(funeralId)).data.ownerUid == request.auth.uid);
+        allow update: if isSignedIn() &&
+          isValidId(funeralId) &&
+          isValidId(mediaId) &&
+          isValidMediaAttachment(incoming(), funeralId, mediaId) &&
+          incoming().id == existing().id &&
+          incoming().parentId == existing().parentId &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().serverCreatedAt == existing().serverCreatedAt &&
+          incoming().serverUpdatedAt == request.time &&
+          (isSuperAdmin() || (
+            isOwner(existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'serverUpdatedAt'])
+          ));
+        allow delete: if isValidId(funeralId) && isValidId(mediaId) && (isSuperAdmin() || isOwner(existing()));
+      }
+    }
+
+    // 7. Donation Records (แบบ บจ.01)
+    function isValidDonationRecord(data, donationId) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'code', 'status', 'recipientType',
+          'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'ownerUid', 'code', 'distributionDate', 'status', 'recipientType',
+          'individualTitle', 'individualName', 'individualNationalId', 'individualPhone',
+          'individualAddress', 'individualCategory', 'individualNeedReason',
+          'agencyName', 'agencyType', 'agencyContactPerson', 'agencyContactPosition',
+          'agencyPhone', 'agencyAddress', 'agencyRequestPurpose', 'officialLetterNo',
+          'waterPacks', 'waterUnit', 'dryFoodCount', 'dryFoodUnit', 'riceBags', 'riceKg',
+          'diaperPacks', 'diaperSize', 'otherItems', 'notes',
+          'handoverPlace', 'deliveryMethod',
+          'officerId', 'officerName', 'officerPosition', 'approverName', 'approverPosition',
+          'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.id == donationId &&
+        isValidId(data.ownerUid) &&
+        isStr(data.code, 40) && data.code.size() >= 1 &&
+        isOptStr(data, 'distributionDate', 32) &&
+        data.status in ['completed', 'pending', 'cancelled'] &&
+        data.recipientType in ['individual', 'government'] &&
+        isOptStr(data, 'individualTitle', 30) &&
+        isOptStr(data, 'individualName', 200) &&
+        isOptStr(data, 'individualNationalId', 30) &&
+        isOptStr(data, 'individualPhone', 50) &&
+        isOptStr(data, 'individualAddress', 500) &&
+        isOptStr(data, 'individualCategory', 100) &&
+        isOptStr(data, 'individualNeedReason', 1000) &&
+        isOptStr(data, 'agencyName', 300) &&
+        isOptStr(data, 'agencyType', 120) &&
+        isOptStr(data, 'agencyContactPerson', 200) &&
+        isOptStr(data, 'agencyContactPosition', 200) &&
+        isOptStr(data, 'agencyPhone', 50) &&
+        isOptStr(data, 'agencyAddress', 500) &&
+        isOptStr(data, 'agencyRequestPurpose', 1000) &&
+        isOptStr(data, 'officialLetterNo', 100) &&
+        isOptNum(data, 'waterPacks') &&
+        isOptStr(data, 'waterUnit', 40) &&
+        isOptNum(data, 'dryFoodCount') &&
+        isOptStr(data, 'dryFoodUnit', 40) &&
+        isOptNum(data, 'riceBags') &&
+        isOptNum(data, 'riceKg') &&
+        isOptNum(data, 'diaperPacks') &&
+        isOptStr(data, 'diaperSize', 40) &&
+        (!( 'otherItems' in data ) || (data.otherItems is list && data.otherItems.size() <= 30 && (data.otherItems.size() == 0 || data.otherItems[0] is map))) &&
+        isOptStr(data, 'notes', 1000) &&
+        isOptStr(data, 'handoverPlace', 300) &&
+        isOptStr(data, 'deliveryMethod', 200) &&
+        isOptStr(data, 'officerId', 128) &&
+        isOptStr(data, 'officerName', 200) &&
+        isOptStr(data, 'officerPosition', 200) &&
+        isOptStr(data, 'approverName', 200) &&
+        isOptStr(data, 'approverPosition', 200) &&
+        isStr(data.createdAt, 64) &&
+        isStr(data.updatedAt, 64) &&
+        data.serverCreatedAt is timestamp &&
+        data.serverUpdatedAt is timestamp;
+    }
+
+    match /donations/{donationId} {
+      allow get: if isValidId(donationId) && (isStaffAdmin() || isOwner(existing()));
+      allow list: if isSignedIn() && (isSuperAdmin() || existing().ownerUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        isValidId(donationId) &&
+        isValidDonationRecord(incoming(), donationId) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().serverCreatedAt == request.time &&
+        incoming().serverUpdatedAt == request.time;
+      allow update: if isSignedIn() &&
+        isValidId(donationId) &&
+        isValidDonationRecord(incoming(), donationId) &&
+        incoming().id == existing().id &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().serverCreatedAt == existing().serverCreatedAt &&
+        incoming().serverUpdatedAt == request.time &&
+        (
+          isSuperAdmin() ||
+          isStaffAdmin() ||
+          (
+            existing().status != 'cancelled' &&
+            isOwner(existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'code', 'distributionDate', 'status', 'recipientType',
+              'individualTitle', 'individualName', 'individualNationalId', 'individualPhone',
+              'individualAddress', 'individualCategory', 'individualNeedReason',
+              'agencyName', 'agencyType', 'agencyContactPerson', 'agencyContactPosition',
+              'agencyPhone', 'agencyAddress', 'agencyRequestPurpose', 'officialLetterNo',
+              'waterPacks', 'waterUnit', 'dryFoodCount', 'dryFoodUnit', 'riceBags', 'riceKg',
+              'diaperPacks', 'diaperSize', 'otherItems', 'notes',
+              'handoverPlace', 'deliveryMethod',
+              'officerId', 'officerName', 'officerPosition', 'approverName', 'approverPosition',
+              'updatedAt', 'serverUpdatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(donationId) && (isSuperAdmin() || isOwner(existing()));
+
+      match /media/{mediaId} {
+        allow get: if isValidId(donationId) && isValidId(mediaId) && (
+          isStaffAdmin() ||
+          isOwner(existing())
+        );
+        allow list: if isSignedIn() && (isSuperAdmin() || existing().ownerUid == request.auth.uid);
+        allow create: if isSignedIn() &&
+          isValidId(donationId) &&
+          isValidId(mediaId) &&
+          isValidMediaAttachment(incoming(), donationId, mediaId) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().serverCreatedAt == request.time &&
+          incoming().serverUpdatedAt == request.time &&
+          exists(/databases/$(database)/documents/donations/$(donationId)) &&
+          (isSuperAdmin() || get(/databases/$(database)/documents/donations/$(donationId)).data.ownerUid == request.auth.uid);
+        allow update: if isSignedIn() &&
+          isValidId(donationId) &&
+          isValidId(mediaId) &&
+          isValidMediaAttachment(incoming(), donationId, mediaId) &&
+          incoming().id == existing().id &&
+          incoming().parentId == existing().parentId &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().serverCreatedAt == existing().serverCreatedAt &&
+          incoming().serverUpdatedAt == request.time &&
+          (isSuperAdmin() || (
+            isOwner(existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'serverUpdatedAt'])
+          ));
+        allow delete: if isValidId(donationId) && isValidId(mediaId) && (isSuperAdmin() || isOwner(existing()));
+      }
+    }
+  }
+}

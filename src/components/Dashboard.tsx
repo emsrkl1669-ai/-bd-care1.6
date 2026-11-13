@@ -34,8 +34,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ patients }) => {
     (sum, p) => sum + (p.helpCashEnabled ? p.helpCashAmount : 0),
     0
   );
-  const totalRicePacks = activePatients.reduce((sum, p) => sum + p.helpRicePacks, 0);
-  const totalWaterPacks = activePatients.reduce((sum, p) => sum + p.helpWaterPacks, 0);
+  const totalRicePacks = activePatients.reduce((sum, p) => sum + (p.helpRicePacks || 0), 0);
+  const water15LPacks = activePatients.reduce(
+    (sum, p) => (p.helpWaterSize === '1.5L' || !p.helpWaterSize ? sum + (p.helpWaterPacks || 0) : sum),
+    0
+  );
+  const water600MLPacks = activePatients.reduce(
+    (sum, p) => (p.helpWaterSize === '600ML' ? sum + (p.helpWaterPacks || 0) : sum),
+    0
+  );
+  const totalWaterPacks = water15LPacks + water600MLPacks;
 
   // Diaper sizes count
   const diaperCounts: Record<DiaperSize, number> = {
@@ -224,9 +232,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ patients }) => {
             ))}
           </div>
 
-          <div className="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-600 flex justify-between">
+          <div className="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-600 flex flex-wrap justify-between gap-2">
             <span>ข้าวสาร 5 กก. รวม: <b className="text-slate-900">{totalRicePacks} ถุง</b></span>
-            <span>น้ำดื่ม 1.5L รวม: <b className="text-slate-900">{totalWaterPacks} แพ็ค</b></span>
+            <span>
+              น้ำดื่มสิงห์รวม: <b className="text-slate-900">{totalWaterPacks} แพ็ค</b>{' '}
+              <span className="text-[11px] text-slate-500">
+                (1.5L: {water15LPacks} แพ็ค • 600ML: {water600MLPacks} แพ็ค)
+              </span>
+            </span>
           </div>
         </div>
       </div>

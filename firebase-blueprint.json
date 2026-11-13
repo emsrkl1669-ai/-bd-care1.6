@@ -1,0 +1,874 @@
+{
+  "entities": {
+    "AdminMember": {
+      "title": "AdminMember",
+      "description": "Authorized foundation officer or administrator granted access to BD-Care records",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "role": {
+          "type": "string",
+          "enum": ["officer", "approver", "president", "superadmin"]
+        },
+        "serverCreatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "role", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "PatientRecord": {
+      "title": "PatientRecord",
+      "description": "Core patient survey and relief assistance record (แบบ สค.04) without large binary media arrays",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "admissionDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "pending", "deceased", "moved", "rejected"]
+        },
+        "statusReason": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "nationalId": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "birthDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "age": {
+          "type": "number"
+        },
+        "gender": {
+          "type": "string",
+          "enum": ["ชาย", "หญิง"]
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "caregiverName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "caregiverRelation": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "caregiverPhone": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "idAddress": {
+          "type": "object"
+        },
+        "isSameAddress": {
+          "type": "boolean"
+        },
+        "currentAddress": {
+          "type": "object"
+        },
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        },
+        "locationAccuracy": {
+          "type": "number"
+        },
+        "landmarkNote": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "googleMapsUrl": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "qrCodeDataUrl": {
+          "type": "string",
+          "maxLength": 40000
+        },
+        "mobilityLevel": {
+          "type": "string",
+          "enum": ["bedridden", "semi_bedridden", "can_walk"]
+        },
+        "chronicDiseases": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "symptomsDetail": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "disabilityCard": {
+          "type": "object"
+        },
+        "specialNeeds": {
+          "type": "array"
+        },
+        "familyMembersTotal": {
+          "type": "number"
+        },
+        "familyMembersMale": {
+          "type": "number"
+        },
+        "familyMembersFemale": {
+          "type": "number"
+        },
+        "incomeSalary": {
+          "type": "number"
+        },
+        "incomeDisability": {
+          "type": "number"
+        },
+        "incomeElderly": {
+          "type": "number"
+        },
+        "incomeStateWelfare": {
+          "type": "number"
+        },
+        "incomeOther": {
+          "type": "number"
+        },
+        "expenseRentHouse": {
+          "type": "number"
+        },
+        "expenseRentLand": {
+          "type": "number"
+        },
+        "expenseLiving": {
+          "type": "number"
+        },
+        "expenseMedicalTravel": {
+          "type": "number"
+        },
+        "expenseDebt": {
+          "type": "number"
+        },
+        "expenseOther": {
+          "type": "number"
+        },
+        "monthlyExpense": {
+          "type": "number"
+        },
+        "netIncome": {
+          "type": "number"
+        },
+        "economicNote": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "helpCashEnabled": {
+          "type": "boolean"
+        },
+        "helpCashAmount": {
+          "type": "number"
+        },
+        "helpDiaperSize": {
+          "type": "string",
+          "enum": ["S", "M", "L", "XL", "XXL", "NONE"]
+        },
+        "helpDiaperPacks": {
+          "type": "number"
+        },
+        "helpRicePacks": {
+          "type": "number"
+        },
+        "helpWaterSize": {
+          "type": "string",
+          "enum": ["1.5L", "600ML", "NONE"]
+        },
+        "helpWaterPacks": {
+          "type": "number"
+        },
+        "helpOtherSupplies": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "vulnerabilityScore": {
+          "type": "number"
+        },
+        "vulnerabilityLevel": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "dimensionScores": {
+          "type": "object"
+        },
+        "socialWorkerOpinion": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "aiSuggestions": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "interviewerName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "interviewerPosition": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "approverName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "approverPosition": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "presidentName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "presidentPosition": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "serverCreatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "code",
+        "status",
+        "fullName",
+        "mobilityLevel",
+        "createdAt",
+        "updatedAt",
+        "serverCreatedAt",
+        "serverUpdatedAt"
+      ]
+    },
+    "PatientDelivery": {
+      "title": "PatientDelivery",
+      "description": "Monthly supply delivery record stored in patient subcollection",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "patientId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "deliveryDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "monthYearLabel": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "cashAmount": {
+          "type": "number"
+        },
+        "cashGiven": {
+          "type": "boolean"
+        },
+        "diaperSize": {
+          "type": "string",
+          "enum": ["S", "M", "L", "XL", "XXL", "NONE"]
+        },
+        "diaperPacks": {
+          "type": "number"
+        },
+        "ricePacks": {
+          "type": "number"
+        },
+        "waterPacks": {
+          "type": "number"
+        },
+        "waterSize": {
+          "type": "string",
+          "enum": ["1.5L", "600ML", "NONE"]
+        },
+        "otherItems": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "receivedBy": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "recipientRelation": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "officerName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "serverCreatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "patientId", "ownerUid", "deliveryDate", "receivedBy", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "MediaAttachment": {
+      "title": "MediaAttachment",
+      "description": "Single photo or uploaded document stored in a subcollection to keep each Firestore document safely under 1 MiB",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["photo", "document"]
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "fileName": {
+          "type": "string",
+          "maxLength": 255
+        },
+        "fileType": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "dataUrl": {
+          "type": "string",
+          "maxLength": 850000
+        },
+        "fileSize": {
+          "type": "number"
+        },
+        "caption": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "timestamp": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "uploadDate": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "serverCreatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "parentId", "ownerUid", "kind", "dataUrl", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "FuneralRecord": {
+      "title": "FuneralRecord",
+      "description": "Funeral assistance application record (แบบ ฌศ.01) without inline attachment binaries",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "applicationDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "completed", "rejected"]
+        },
+        "statusNote": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "deceasedTitle": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "deceasedName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "deceasedNationalId": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "deceasedAge": {
+          "type": "number"
+        },
+        "deceasedDeathDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "deceasedDeathTime": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "causeOfDeath": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "deathPlace": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "deceasedAddress": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "applicantTitle": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "applicantName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "applicantNationalId": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "applicantPhone": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "applicantRelation": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "applicantAddress": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "applicantPovertyReason": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "templeName": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "cremationDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "cremationTime": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "assistanceAmount": {
+          "type": "number"
+        },
+        "coffinProvided": {
+          "type": "boolean"
+        },
+        "transportProvided": {
+          "type": "boolean"
+        },
+        "shroudClothProvided": {
+          "type": "boolean"
+        },
+        "otherItems": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "officerId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "officerName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "officerPosition": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "approverId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "approverName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "approverPosition": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "approvalDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "serverCreatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "code",
+        "status",
+        "deceasedName",
+        "applicantName",
+        "createdAt",
+        "updatedAt",
+        "serverCreatedAt",
+        "serverUpdatedAt"
+      ]
+    },
+    "DonationRecord": {
+      "title": "DonationRecord",
+      "description": "Donation supply distribution record (แบบ บจ.01) without inline attachment binaries",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "distributionDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "pending", "cancelled"]
+        },
+        "recipientType": {
+          "type": "string",
+          "enum": ["individual", "government"]
+        },
+        "individualTitle": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "individualName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "individualNationalId": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "individualPhone": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "individualAddress": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "individualCategory": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "individualNeedReason": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "agencyName": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "agencyType": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "agencyContactPerson": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "agencyContactPosition": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "agencyPhone": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "agencyAddress": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "agencyRequestPurpose": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "officialLetterNo": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "waterPacks": {
+          "type": "number"
+        },
+        "waterUnit": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "dryFoodCount": {
+          "type": "number"
+        },
+        "dryFoodUnit": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "riceBags": {
+          "type": "number"
+        },
+        "riceKg": {
+          "type": "number"
+        },
+        "diaperPacks": {
+          "type": "number"
+        },
+        "diaperSize": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "otherItems": {
+          "type": "array"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "handoverPlace": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "deliveryMethod": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "officerId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "officerName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "officerPosition": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "approverName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "approverPosition": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "serverCreatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "code",
+        "status",
+        "recipientType",
+        "createdAt",
+        "updatedAt",
+        "serverCreatedAt",
+        "serverUpdatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminMember" },
+      "description": "Authorized staff members for BD-Care foundation operations"
+    },
+    "/patients/{patientId}": {
+      "schema": { "$ref": "#/entities/PatientRecord" },
+      "description": "Patient records (แบบ สค.04) with PII restricted to owner or foundation admins"
+    },
+    "/patients/{patientId}/deliveries/{deliveryId}": {
+      "schema": { "$ref": "#/entities/PatientDelivery" },
+      "description": "Monthly supply deliveries for a patient"
+    },
+    "/patients/{patientId}/media/{mediaId}": {
+      "schema": { "$ref": "#/entities/MediaAttachment" },
+      "description": "Photos and uploaded documents belonging to a patient"
+    },
+    "/funerals/{funeralId}": {
+      "schema": { "$ref": "#/entities/FuneralRecord" },
+      "description": "Funeral assistance case records (แบบ ฌศ.01)"
+    },
+    "/funerals/{funeralId}/media/{mediaId}": {
+      "schema": { "$ref": "#/entities/MediaAttachment" },
+      "description": "Uploaded 7-item funeral verification documents"
+    },
+    "/donations/{donationId}": {
+      "schema": { "$ref": "#/entities/DonationRecord" },
+      "description": "Donation supply distribution records (แบบ บจ.01)"
+    },
+    "/donations/{donationId}/media/{mediaId}": {
+      "schema": { "$ref": "#/entities/MediaAttachment" },
+      "description": "Photos and uploaded supporting documents for a donation record"
+    }
+  }
+}

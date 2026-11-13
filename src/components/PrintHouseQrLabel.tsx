@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Printer, 
   X, 
@@ -47,7 +48,7 @@ export const PrintHouseQrLabel: React.FC<PrintHouseQrLabelProps> = ({ patient, o
     window.print();
   };
 
-  return (
+  return createPortal(
     <div className="a4-print-modal fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4">
       {/* Control Bar */}
       <div className="no-print w-full max-w-4xl bg-white rounded-2xl shadow-2xl p-3 sm:p-4 mb-3 sticky top-2 z-50 border border-slate-200">
@@ -133,7 +134,7 @@ export const PrintHouseQrLabel: React.FC<PrintHouseQrLabelProps> = ({ patient, o
         }}
       >
         {/* Printable A4 Sheet */}
-        <div className="a4-sheet bg-white text-slate-900 shadow-2xl rounded-xs p-6 sm:p-[14mm] border border-slate-300 relative font-['Prompt',sans-serif] flex flex-col justify-between">
+        <div className="a4-sheet bg-white text-slate-900 shadow-2xl rounded-xs p-6 sm:py-[11mm] sm:px-[13mm] border border-slate-300 relative font-['Sarabun',sans-serif] flex flex-col justify-between">
           <div>
             {/* Top Header */}
             <div className="flex items-center justify-between border-b-2 border-blue-900 pb-3 mb-4">
@@ -299,6 +300,7 @@ export const PrintHouseQrLabel: React.FC<PrintHouseQrLabelProps> = ({ patient, o
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

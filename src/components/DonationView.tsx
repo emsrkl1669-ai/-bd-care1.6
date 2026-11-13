@@ -35,6 +35,7 @@ import { formatNationalId, formatPhone, formatThaiDate, formatThaiDateShort } fr
 import { DonationFormModal } from './DonationFormModal';
 import { PrintDonationForm } from './PrintDonationForm';
 import { PrintRosterModal } from './PrintRosterModal';
+import { useUiFeedback } from './UiFeedback';
 
 interface DonationViewProps {
   donations: DonationDistributionRecord[];
@@ -49,6 +50,7 @@ export const DonationView: React.FC<DonationViewProps> = ({
   onDeleteDonation,
   currentAdmin,
 }) => {
+  const { confirmDialog } = useUiFeedback();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'individual' | 'government' | 'completed' | 'pending'>('all');
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -101,8 +103,15 @@ export const DonationView: React.FC<DonationViewProps> = ({
     });
   }, [donations, filterType, searchTerm]);
 
-  const handleDelete = (id: string, name: string) => {
-    if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบรายการบริจาคของ "${name}"?`)) {
+  const handleDelete = async (id: string, name: string) => {
+    const ok = await confirmDialog({
+      title: 'ยืนยันการลบรายการบริจาค',
+      message: `คุณแน่ใจหรือไม่ว่าต้องการลบรายการบริจาคของ "${name}"?`,
+      confirmLabel: 'ลบรายการ',
+      cancelLabel: 'ยกเลิก',
+      variant: 'danger',
+    });
+    if (ok) {
       onDeleteDonation(id);
     }
   };
@@ -549,6 +558,7 @@ export const DonationView: React.FC<DonationViewProps> = ({
           }}
           onSave={onSaveDonation}
           existingCount={donations.length}
+          existingCodes={donations.map((d) => d.code)}
         />
       )}
 
@@ -585,7 +595,7 @@ export const DonationView: React.FC<DonationViewProps> = ({
           subtitle={`หมวด: ${filterType === 'individual' ? 'ประชาชนทั่วไป' : filterType === 'government' ? 'หน่วยงานราชการ' : 'ทั้งหมด'} • มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)`}
           documentCode="แบบ บจ.01-R"
           items={filteredDonations}
-          itemsPerPage={12}
+          itemsPerPage={9}
           onClose={() => setIsPrintingRoster(false)}
           summaryItems={[
             { label: 'บันทึกตามตัวกรอง', value: `${filteredDonations.length} รายการ` },

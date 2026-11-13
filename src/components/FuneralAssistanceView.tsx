@@ -495,6 +495,7 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
           }}
           onSave={onSaveFuneral}
           existingCount={funerals.length}
+          existingCodes={funerals.map((f) => f.code)}
         />
       )}
 
@@ -707,7 +708,7 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
           subtitle={`สถานะ: ${statusFilter === 'all' ? 'ทุกสถานะคำร้อง' : statusFilter} • มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)`}
           documentCode="แบบ ฌศ.01-R"
           items={filteredRecords}
-          itemsPerPage={12}
+          itemsPerPage={9}
           onClose={() => setIsPrintingRoster(false)}
           summaryItems={[
             { label: 'คำร้องตามตัวกรอง', value: `${filteredRecords.length} เคส` },

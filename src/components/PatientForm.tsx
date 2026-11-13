@@ -40,6 +40,8 @@ import { LiveCameraModal } from './LiveCameraModal';
 import { DocumentViewerModal } from './DocumentViewerModal';
 import { PrintHouseQrLabel } from './PrintHouseQrLabel';
 import { PrintFormSK04 } from './PrintFormSK04';
+import { useUiFeedback } from './UiFeedback';
+import { compressImageDataUrl, processFileForUpload, getNextPatientCode } from '../utils/image';
 
 interface PatientFormProps {
   initialPatient?: PatientRecord | null;
@@ -47,6 +49,7 @@ interface PatientFormProps {
   onSave: (patient: PatientRecord) => void;
   onCancel: () => void;
   existingCount: number;
+  existingCodes?: string[];
 }
 
 export const PatientForm: React.FC<PatientFormProps> = ({
@@ -55,10 +58,14 @@ export const PatientForm: React.FC<PatientFormProps> = ({
   onSave,
   onCancel,
   existingCount,
+  existingCodes,
 }) => {
+  const { showToast } = useUiFeedback();
   const todayStr = new Date().toISOString().slice(0, 10);
   // Generate code if new (format: BDC - {YY}-{NNN})
-  const defaultCode = generatePatientCode(todayStr, existingCount + 1);
+  const defaultCode = existingCodes
+    ? getNextPatientCode(todayStr, existingCodes)
+    : generatePatientCode(todayStr, existingCount + 1);
 
   // Form State
   const [formData, setFormData] = useState<PatientRecord>(() => {
@@ -205,12 +212,20 @@ export const PatientForm: React.FC<PatientFormProps> = ({
       Number(formData.expenseDebt || 0) +
       Number(formData.expenseOther || 0);
 
-    const finalExpense = sumExpenses > 0 ? sumExpenses : Number(formData.monthlyExpense || 0);
+    const hasSubExpenses =
+      formData.expenseRentHouse !== undefined ||
+      formData.expenseRentLand !== undefined ||
+      formData.expenseLiving !== undefined ||
+      formData.expenseMedicalTravel !== undefined ||
+      formData.expenseDebt !== undefined ||
+      formData.expenseOther !== undefined;
+
+    const finalExpense = hasSubExpenses ? sumExpenses : Number(formData.monthlyExpense || 0);
     const net = totalIncome - finalExpense;
-    setFormData((prev) => ({ 
-      ...prev, 
+    setFormData((prev) => ({
+      ...prev,
       monthlyExpense: finalExpense,
-      netIncome: net 
+      netIncome: net,
     }));
   }, [
     formData.incomeSalary,
@@ -261,7 +276,7 @@ export const PatientForm: React.FC<PatientFormProps> = ({
   // Pull GPS Coordinates
   const handleFetchGps = () => {
     if (!navigator.geolocation) {
-      alert('อุปกรณ์ของคุณไม่รองรับการดึงพิกัดผ่าน GPS');
+      showToast('อุปกรณ์ของคุณไม่รองรับการดึงพิกัดผ่าน GPS', 'error');
       return;
     }
 
@@ -283,10 +298,11 @@ export const PatientForm: React.FC<PatientFormProps> = ({
           qrCodeDataUrl: qr,
         }));
         setIsGpsLoading(false);
+        showToast('ดึงพิกัด GPS และสร้าง QR Code สำเร็จ', 'success');
       },
       (err) => {
         console.error('GPS error:', err);
-        alert('ไม่สามารถดึงพิกัด GPS ได้: ' + (err.message || 'กรุณาเปิดสิทธิ์เข้าถึงตำแหน่ง'));
+        showToast('ไม่สามารถดึงพิกัด GPS ได้: ' + (err.message || 'กรุณาเปิดสิทธิ์เข้าถึงตำแหน่ง'), 'error');
         setIsGpsLoading(false);
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
@@ -342,11 +358,12 @@ export const PatientForm: React.FC<PatientFormProps> = ({
     setAiResultNotice(null);
 
     try {
+      const { photos: _p, documents: _d, qrCodeDataUrl: _q, ...lightweightPatient } = formData;
       const response = await fetch('/api/ai/evaluate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          patientData: formData,
+          patientData: lightweightPatient,
           interviewNotes: `ระดับการเจ็บป่วย: ${formData.mobilityLevel}, โรคประจำตัว: ${formData.chronicDiseases}, รายได้สุทธิ: ${formData.netIncome} บาท, ผู้ดูแล: ${formData.caregiverName} (${formData.caregiverRelation})`,
         }),
       });
@@ -413,26 +430,31 @@ export const PatientForm: React.FC<PatientFormProps> = ({
   };
 
   // Handle Photo Capture from Live Camera
-  const handlePhotoCaptured = (photo: PatientPhoto) => {
+  const handlePhotoCaptured = async (photo: PatientPhoto) => {
+    const compressedUrl = await compressImageDataUrl(photo.dataUrl, {
+      maxWidth: 1200,
+      maxHeight: 1200,
+      quality: 0.78,
+      maxDataUrlLength: 760000,
+    });
     setFormData((prev) => ({
       ...prev,
-      photos: [...prev.photos, photo],
+      photos: [...prev.photos, { ...photo, dataUrl: compressedUrl }],
     }));
   };
 
   // Handle File Upload for Photos
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const dataUrl = event.target?.result as string;
+    for (const file of Array.from(files)) {
+      try {
+        const processed = await processFileForUpload(file, 760000);
         const newPhoto: PatientPhoto = {
-          id: 'photo_' + Date.now() + Math.random().toString(36).substring(2, 6),
+          id: 'photo_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
           category: 'patient',
-          dataUrl,
+          dataUrl: processed.dataUrl,
           caption: file.name,
           timestamp: formatThaiDateShort(new Date().toISOString().slice(0, 10)),
         };
@@ -440,14 +462,15 @@ export const PatientForm: React.FC<PatientFormProps> = ({
           ...prev,
           photos: [...prev.photos, newPhoto],
         }));
-      };
-      reader.readAsDataURL(file);
-    });
+      } catch {
+        showToast(`ไม่สามารถอัปโหลดรูปภาพ ${file.name} ได้`, 'error');
+      }
+    }
     e.target.value = '';
   };
 
   // Handle Document Upload (PDF, JPG, PNG)
-  const handleDocumentUpload = (
+  const handleDocumentUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
     category: PatientDocument['category'],
     title: string
@@ -455,25 +478,31 @@ export const PatientForm: React.FC<PatientFormProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
+    try {
+      const processed = await processFileForUpload(file, 780000);
+      if (processed.tooLargeForCloud) {
+        showToast(
+          `ไฟล์ "${file.name}" มีขนาดใหญ่เกิน ~600KB จึงเก็บในเครื่องได้ชั่วคราวแต่ไม่สามารถซิงค์ขึ้น Cloud ได้ แนะนำให้ถ่ายภาพหรือลดขนาดไฟล์`,
+          'warning'
+        );
+      }
       const newDoc: PatientDocument = {
         id: 'doc_' + Date.now(),
         category,
         title,
         fileName: file.name,
-        fileType: file.type || 'application/octet-stream',
-        dataUrl,
-        fileSize: file.size,
+        fileType: processed.fileType,
+        dataUrl: processed.dataUrl,
+        fileSize: processed.fileSize,
         uploadDate: formatThaiDateShort(new Date().toISOString().slice(0, 10)),
       };
       setFormData((prev) => ({
         ...prev,
         documents: [...prev.documents.filter((d) => d.category !== category), newDoc],
       }));
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      showToast(`ไม่สามารถอ่านไฟล์ ${file.name} ได้`, 'error');
+    }
     e.target.value = '';
   };
 
@@ -481,7 +510,7 @@ export const PatientForm: React.FC<PatientFormProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.fullName.trim()) {
-      alert('กรุณากรอกชื่อ-นามสกุลของผู้ป่วย');
+      showToast('กรุณากรอกชื่อ-นามสกุลของผู้ป่วย', 'warning');
       return;
     }
 

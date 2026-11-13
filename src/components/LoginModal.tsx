@@ -1,24 +1,33 @@
 import React, { useState } from 'react';
-import { 
-  Lock, 
-  User, 
-  Key, 
-  ShieldCheck, 
-  X, 
-  CheckCircle2, 
+import { User as FirebaseUser } from 'firebase/auth';
+import {
+  Lock,
+  User,
+  Key,
+  ShieldCheck,
+  X,
+  CheckCircle2,
   AlertCircle,
   Eye,
   EyeOff,
   UserCheck,
-  Building2
+  Cloud,
+  RefreshCw,
+  LogOut,
 } from 'lucide-react';
 import { ADMIN_USERS, AdminUser } from '../types';
+import { isSuperAdminUser } from '../firebase';
 
 interface LoginModalProps {
   currentAdmin: AdminUser;
   isOpen: boolean;
   onClose: () => void;
   onLoginSuccess: (admin: AdminUser) => void;
+  firebaseUser?: FirebaseUser | null;
+  cloudStatus?: 'disconnected' | 'syncing' | 'synced' | 'error';
+  onCloudSignIn?: () => void;
+  onCloudSignOut?: () => void;
+  onManualCloudSync?: () => void;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
@@ -26,6 +35,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   isOpen,
   onClose,
   onLoginSuccess,
+  firebaseUser = null,
+  cloudStatus = 'disconnected',
+  onCloudSignIn,
+  onCloudSignOut,
+  onManualCloudSync,
 }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -50,7 +64,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       setTimeout(() => {
         onLoginSuccess(foundAdmin);
         onClose();
-      }, 500);
+      }, 400);
     } else {
       setErrorMsg('ชื่อผู้ใช้งาน (Username) หรือรหัสผ่าน (Password) ไม่ถูกต้อง');
     }
@@ -63,8 +77,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs overflow-y-auto">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col my-auto">
         {/* Header */}
         <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -72,7 +86,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <ShieldCheck className="w-6 h-6 text-blue-400" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-white">เข้าสู่ระบบเจ้าหน้าที่ (Admin Login)</h3>
+              <h3 className="font-bold text-base text-white">เข้าสู่ระบบเจ้าหน้าที่ & Cloud Firestore</h3>
               <p className="text-xs text-slate-300">
                 มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)
               </p>
@@ -86,13 +100,88 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+          {/* Firebase Cloud Sync Card */}
+          <div className="p-3.5 rounded-xl border border-blue-200 bg-blue-50/70 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                <Cloud className="w-4 h-4 text-blue-600" />
+                <span>ฐานข้อมูลถาวร Cloud Firestore (bd-care-6176a)</span>
+              </span>
+              {firebaseUser && isSuperAdminUser(firebaseUser) && (
+                <span className="text-[10px] font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
+                  Super Admin
+                </span>
+              )}
+            </div>
+
+            {firebaseUser ? (
+              <div className="space-y-2">
+                <div className="text-xs text-slate-700 bg-white border border-blue-100 rounded-lg p-2.5 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-900 truncate">
+                      {firebaseUser.displayName || 'ผู้ใช้งานระบบ'}
+                    </div>
+                    <div className="text-[11px] text-slate-500 truncate">{firebaseUser.email}</div>
+                  </div>
+                  <span
+                    className={`text-[10.5px] font-bold px-2 py-0.5 rounded shrink-0 ${
+                      cloudStatus === 'syncing'
+                        ? 'bg-blue-100 text-blue-800'
+                        : cloudStatus === 'error'
+                        ? 'bg-red-100 text-red-800'
+                        : 'bg-emerald-100 text-emerald-800'
+                    }`}
+                  >
+                    {cloudStatus === 'syncing'
+                      ? 'กำลังซิงค์'
+                      : cloudStatus === 'error'
+                      ? 'ผิดพลาด'
+                      : 'เชื่อมต่อแล้ว'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onManualCloudSync}
+                    className="flex-1 py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${cloudStatus === 'syncing' ? 'animate-spin' : ''}`} />
+                    <span>ซิงค์ข้อมูลขึ้น Cloud ทันที</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onCloudSignOut}
+                    className="py-1.5 px-3 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>ออก</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11.5px] text-slate-600 leading-relaxed">
+                  เชื่อมต่อด้วยบัญชี Google เพื่อสำรองและซิงค์ข้อมูลผู้ป่วย คำร้องเผาศพ และสิ่งของบริจาคทั้งหมดแบบเรียลไทม์ ป้องกันข้อมูลสูญหายเมื่ออัปเดตแอป
+                </p>
+                <button
+                  type="button"
+                  onClick={onCloudSignIn}
+                  className="w-full py-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-900 rounded-lg text-xs font-bold shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Cloud className="w-4 h-4 text-blue-600" />
+                  <span>เข้าสู่ระบบด้วย Google เพื่อเชื่อมต่อ Cloud</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Currently logged-in status badge */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between text-xs">
             <div className="flex items-center gap-2">
               <div className={`w-3 h-3 rounded-full ${currentAdmin.avatarColor}`} />
               <div>
-                <span className="text-slate-500">บัญชีที่ใช้งานอยู่ปัจจุบัน:</span>{' '}
+                <span className="text-slate-500">เจ้าหน้าที่ผู้ปฏิบัติงานปัจจุบัน:</span>{' '}
                 <span className="font-bold text-slate-900">{currentAdmin.name}</span>
               </div>
             </div>
@@ -102,7 +191,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </div>
 
           {/* Login Form */}
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleLogin} className="space-y-3.5">
             {errorMsg && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
@@ -118,8 +207,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             )}
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                ชื่อผู้ใช้งาน (Username)
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                ชื่อผู้ใช้งานเจ้าหน้าที่ (Username)
               </label>
               <div className="relative">
                 <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -135,7 +224,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+              <label className="block text-xs font-bold text-slate-700 mb-1">
                 รหัสผ่าน (Password)
               </label>
               <div className="relative">
@@ -163,7 +252,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition cursor-pointer flex items-center justify-center gap-2"
             >
               <Lock className="w-4 h-4" />
-              <span>ยืนยันเข้าสู่ระบบ</span>
+              <span>สลับบัญชีเจ้าหน้าที่</span>
             </button>
           </form>
 

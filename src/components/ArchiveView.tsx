@@ -15,6 +15,7 @@ import { PatientRecord, PatientStatus, AdminUser } from '../types';
 import { formatNationalId, formatThaiDate, formatThaiDateShort } from '../utils/idCard';
 import { PrintFormSK04 } from './PrintFormSK04';
 import { PrintRosterModal } from './PrintRosterModal';
+import { useUiFeedback } from './UiFeedback';
 
 interface ArchiveViewProps {
   patients: PatientRecord[];
@@ -27,6 +28,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   onRestorePatient,
   currentAdmin,
 }) => {
+  const { confirmDialog } = useUiFeedback();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'deceased' | 'moved' | 'rejected'>('all');
   const [printingPatient, setPrintingPatient] = useState<PatientRecord | null>(null);
@@ -193,8 +195,15 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => {
-                    if (confirm(`คุณต้องการกู้คืนสถานะของ ${patient.fullName} กลับเข้าสู่โครงการหรือไม่?`)) {
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      title: 'ยืนยันการกู้คืนสถานะผู้ป่วย',
+                      message: `คุณต้องการกู้คืนสถานะของ ${patient.fullName} กลับเข้าสู่โครงการหรือไม่?`,
+                      confirmLabel: 'กู้คืนสถานะ',
+                      cancelLabel: 'ยกเลิก',
+                      variant: 'primary',
+                    });
+                    if (ok) {
                       onRestorePatient(patient.id);
                     }
                   }}
@@ -230,7 +239,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
           subtitle={`หมวด: ${filterType === 'all' ? 'ทั้งหมด' : filterType === 'deceased' ? 'ถึงแก่กรรม' : filterType === 'moved' ? 'ย้ายที่อยู่' : 'ไม่ผ่านโครงการ'} • มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)`}
           documentCode="แบบ สค.04-ARCHIVE"
           items={displayedPatients}
-          itemsPerPage={12}
+          itemsPerPage={9}
           onClose={() => setIsPrintingRoster(false)}
           summaryItems={[
             { label: 'ผู้ป่วยในคลังประวัติ', value: `${displayedPatients.length} ราย` },

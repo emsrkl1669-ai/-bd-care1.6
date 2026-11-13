@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Printer, 
   X, 
@@ -47,7 +48,7 @@ export function PrintRosterModal<T>({
   items,
   columns,
   summaryItems,
-  itemsPerPage = 12,
+  itemsPerPage = 9,
   onClose,
   preparedBy = {
     name: 'นายกริชพิพัฒน์  สลับทอง',
@@ -96,7 +97,7 @@ export function PrintRosterModal<T>({
     window.print();
   };
 
-  return (
+  return createPortal(
     <div className="a4-print-modal fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4">
       {/* Top Floating Control Bar - Hidden when printing */}
       <div className="no-print w-full max-w-5xl bg-white rounded-2xl shadow-2xl p-3 sm:p-4 mb-3 sticky top-2 z-50 border border-slate-200">
@@ -209,8 +210,12 @@ export function PrintRosterModal<T>({
 
       {/* Printable A4 Container */}
       <div
-        className="a4-container transition-transform duration-150 origin-top flex flex-col items-center gap-6"
-        style={{ transform: `scale(${scale})` }}
+        className="a4-container transition-transform duration-150 origin-top flex flex-col items-center gap-6 pb-10"
+        style={{
+          transform: `scale(${scale})`,
+          transformOrigin: 'top center',
+          marginBottom: scale < 1 ? `-${Math.round((1 - scale) * (totalPages * 1140))}px` : undefined,
+        }}
       >
         {pages.map((pageItems, pageIdx) => {
           const isHiddenOnScreen = activeTab !== 'all' && activeTab !== pageIdx;
@@ -219,7 +224,7 @@ export function PrintRosterModal<T>({
           return (
             <div
               key={pageIdx}
-              className={`a4-sheet bg-white text-slate-900 shadow-2xl relative flex flex-col justify-between border border-slate-300 font-sans ${
+              className={`a4-sheet bg-white text-slate-900 shadow-2xl relative flex flex-col justify-between p-5 sm:py-[11mm] sm:px-[13mm] border border-slate-300 font-['Sarabun',sans-serif] ${
                 isHiddenOnScreen ? 'hidden print:flex' : 'flex'
               } ${isLastPage ? 'last-sheet' : ''}`}
             >
@@ -383,6 +388,7 @@ export function PrintRosterModal<T>({
           );
         })}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

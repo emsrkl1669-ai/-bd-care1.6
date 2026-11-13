@@ -19,9 +19,7 @@ export function getStoredPatients(): PatientRecord[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    // Filter out previous demo patient IDs if present
-    const demoIds = new Set(['pt-001', 'pt-002', 'pt-003', 'pt-004']);
-    return parsed.filter((p: PatientRecord) => !demoIds.has(p.id));
+    return parsed;
   } catch (err) {
     console.error('Failed to load patients from localStorage:', err);
     return [];
@@ -32,7 +30,18 @@ export function saveStoredPatients(patients: PatientRecord[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(patients));
   } catch (err) {
-    console.error('Failed to save patients to localStorage:', err);
+    console.warn('localStorage quota exceeded when saving patients, retrying with compressed media cache:', err);
+    try {
+      const compact = patients.map((p) => ({
+        ...p,
+        photos: [],
+        documents: [],
+        deliveries: (p.deliveries || []).map((d) => ({ ...d, photoUrl: undefined })),
+      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(compact));
+    } catch (innerErr) {
+      console.error('Failed to save compact patients to localStorage:', innerErr);
+    }
   }
 }
 
@@ -166,7 +175,13 @@ export function saveStoredFunerals(records: FuneralAssistanceRecord[]): void {
   try {
     localStorage.setItem(FUNERAL_STORAGE_KEY, JSON.stringify(records));
   } catch (err) {
-    console.error('Failed to save funerals to localStorage:', err);
+    console.warn('localStorage quota exceeded when saving funerals, retrying without embedded files:', err);
+    try {
+      const compact = records.map((r) => ({ ...r, documents: [] }));
+      localStorage.setItem(FUNERAL_STORAGE_KEY, JSON.stringify(compact));
+    } catch (innerErr) {
+      console.error('Failed to save compact funerals to localStorage:', innerErr);
+    }
   }
 }
 
@@ -274,7 +289,13 @@ export function saveStoredDonations(donations: DonationDistributionRecord[]): vo
   try {
     localStorage.setItem(DONATION_STORAGE_KEY, JSON.stringify(donations));
   } catch (err) {
-    console.error('Failed to save donations to localStorage:', err);
+    console.warn('localStorage quota exceeded when saving donations, retrying without embedded media:', err);
+    try {
+      const compact = donations.map((d) => ({ ...d, photos: [], documents: [] }));
+      localStorage.setItem(DONATION_STORAGE_KEY, JSON.stringify(compact));
+    } catch (innerErr) {
+      console.error('Failed to save compact donations to localStorage:', innerErr);
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Download, FileText, Image as ImageIcon, ExternalLink } from 'lucide-react';
 import { PatientDocument } from '../types';
+import { useUiFeedback } from './UiFeedback';
 
 interface DocumentViewerModalProps {
   document: PatientDocument | null;
@@ -13,6 +14,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
   isOpen,
   onClose,
 }) => {
+  const { showToast } = useUiFeedback();
   if (!isOpen || !document) return null;
 
   const isPdf = document.fileType.includes('pdf') || document.fileName.toLowerCase().endsWith('.pdf');
@@ -20,7 +22,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
 
   const handleDownload = () => {
     if (!document.dataUrl) {
-      alert('ไม่มีข้อมูลไบนารีสำหรับดาวน์โหลด');
+      showToast('ไม่มีข้อมูลไบนารีสำหรับดาวน์โหลด', 'warning');
       return;
     }
     const link = window.document.createElement('a');
