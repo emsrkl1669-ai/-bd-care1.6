@@ -22,6 +22,8 @@ interface PrintDeliveryPlanModalProps {
   selectedDistrict: string;
   currentMonth: string;
   currentAdmin: AdminUser;
+  riceBagsOverride?: number | null;
+  riceUnitPrice?: number;
   onClose: () => void;
 }
 
@@ -30,6 +32,8 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
   selectedDistrict,
   currentMonth,
   currentAdmin,
+  riceBagsOverride,
+  riceUnitPrice = 0,
   onClose,
 }) => {
   const [scale, setScale] = useState<number>(0.75);
@@ -62,8 +66,11 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
   }, [patients]);
 
   const totalRice = useMemo(() => {
+    if (riceBagsOverride !== null && riceBagsOverride !== undefined) {
+      return riceBagsOverride;
+    }
     return patients.reduce((sum, p) => sum + (p.helpRicePacks || 0), 0);
-  }, [patients]);
+  }, [patients, riceBagsOverride]);
 
   const waterCounts = useMemo(() => {
     let size15L = 0;
@@ -393,6 +400,11 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
                     <div className="border-r border-blue-200/80 pr-1">
                       <div className="text-slate-500 text-[9px] leading-tight">ข้าวสาร (5 กก.)</div>
                       <div className="font-black text-[12px] text-amber-800 leading-tight">{totalRice} ถุง</div>
+                      {riceUnitPrice > 0 && (
+                        <div className="text-[8px] text-slate-600 leading-none">
+                          (@{formatCurrency(riceUnitPrice)} = {formatCurrency(totalRice * riceUnitPrice)} บ.)
+                        </div>
+                      )}
                     </div>
                     <div className="border-r border-blue-200/80 pr-1">
                       <div className="text-slate-500 text-[9px] leading-tight">น้ำดื่มสิงห์รวม</div>

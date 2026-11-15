@@ -35,6 +35,16 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
   const [deliveringPatient, setDeliveringPatient] = useState<PatientRecord | null>(null);
   const [receiverInput, setReceiverInput] = useState('');
   const [receiverRelationInput, setReceiverRelationInput] = useState('ผู้ดูแล');
+  const [customRiceCount, setCustomRiceCount] = useState<number | null>(null);
+  const [ricePricePerBag, setRicePricePerBag] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('bdcare_rice_price_per_bag');
+      const parsed = saved ? parseFloat(saved) : 0;
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    } catch {
+      return 0;
+    }
+  });
 
   // Only active patients receive monthly supplies
   const activePatients = patients.filter((p) => p.status === 'active');
@@ -48,6 +58,8 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
     0
   );
   const totalRice = displayedPatients.reduce((sum, p) => sum + (p.helpRicePacks || 0), 0);
+  const effectiveRiceBags = customRiceCount !== null ? customRiceCount : totalRice;
+  const totalRiceCost = effectiveRiceBags * ricePricePerBag;
   const water15LPacks = displayedPatients.reduce(
     (sum, p) => (p.helpWaterSize === '1.5L' || !p.helpWaterSize ? sum + (p.helpWaterPacks || 0) : sum),
     0
@@ -192,11 +204,63 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
         </div>
 
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-          <div className="text-xs text-slate-500 font-medium">ข้าวสาร 5 กก.</div>
-          <div className="text-2xl font-black text-amber-600 mt-1">
-            {totalRice} <span className="text-sm font-normal text-slate-500">ถุง</span>
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-xs text-slate-500 font-medium">
+              ข้าวสาร 5 กก. ({effectiveRiceBags * 5} กก.)
+            </span>
+            {customRiceCount !== null && (
+              <button
+                type="button"
+                onClick={() => setCustomRiceCount(null)}
+                className="text-[10px] text-amber-700 hover:underline font-semibold cursor-pointer"
+                title={`คืนค่าตามยอดผู้ป่วย (${totalRice} ถุง)`}
+              >
+                คืนค่า ({totalRice})
+              </button>
+            )}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">({totalRice * 5} กิโลกรัม)</div>
+          <div className="mt-1.5 grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] text-slate-500">จำนวน (ถุง)</label>
+              <input
+                type="number"
+                min={0}
+                value={effectiveRiceBags}
+                onChange={(e) => {
+                  const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                  setCustomRiceCount(val);
+                }}
+                className="w-full mt-0.5 px-2 py-1 text-sm font-black text-amber-600 bg-amber-50/50 border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500">ราคา/ถุง (บาท)</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={ricePricePerBag || ''}
+                placeholder="0"
+                onChange={(e) => {
+                  const val = Math.max(0, parseFloat(e.target.value) || 0);
+                  setRicePricePerBag(val);
+                  try {
+                    localStorage.setItem('bdcare_rice_price_per_bag', String(val));
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                className="w-full mt-0.5 px-2 py-1 text-sm font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+          </div>
+          <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-baseline justify-between text-xs">
+            <span className="text-slate-500 font-medium">รวมเป็นจำนวน:</span>
+            <span className="font-black text-amber-700">
+              {formatCurrency(totalRiceCost)}{' '}
+              <span className="text-[11px] font-normal text-slate-500">บาท</span>
+            </span>
+          </div>
         </div>
 
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
@@ -426,6 +490,8 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
           selectedDistrict={selectedDistrict}
           currentMonth={currentMonth}
           currentAdmin={currentAdmin}
+          riceBagsOverride={customRiceCount}
+          riceUnitPrice={ricePricePerBag}
           onClose={() => setShowPrintModal(false)}
         />
       )}
