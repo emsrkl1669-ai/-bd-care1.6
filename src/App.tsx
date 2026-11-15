@@ -12,6 +12,7 @@ import {
   DonationDistributionRecord,
   DeliveryPlanSettings,
   AccessRequestRecord,
+  LanStorageConfig,
 } from './types';
 import {
   getStoredPatients,
@@ -82,6 +83,13 @@ import {
   approveAccessRequest,
   rejectAccessRequest,
 } from './services/firestoreSync';
+import {
+  getStoredLanConfig,
+  saveStoredLanConfig,
+  normalizeLanServerUrl,
+  testLanConnection,
+  syncWithLanServer,
+} from './services/lanSync';
 
 function AppContent() {
   const { showToast, confirmDialog } = useUiFeedback();
@@ -111,12 +119,24 @@ function AppContent() {
   const [isSubmittingRequest, setIsSubmittingRequest] = useState<boolean>(false);
   const [processingReqUid, setProcessingReqUid] = useState<string | null>(null);
 
+  // Local LAN Server Storage (192.168.1.45) states
+  const [lanConfig, setLanConfig] = useState<LanStorageConfig>(() => getStoredLanConfig());
+  const [lanStatus, setLanStatus] = useState<'disabled' | 'syncing' | 'connected' | 'error'>(() =>
+    getStoredLanConfig().enabled ? 'syncing' : 'disabled'
+  );
+  const [lanStatusInfo, setLanStatusInfo] = useState<{
+    dataFilePath?: string;
+    errorMessage?: string;
+    counts?: { patients: number; funerals: number; donations: number };
+  } | null>(null);
+
   // Refs for latest state inside async callbacks
   const patientsRef = useRef<PatientRecord[]>(patients);
   const funeralsRef = useRef<FuneralAssistanceRecord[]>(funerals);
   const donationsRef = useRef<DonationDistributionRecord[]>(donations);
   const deliverySettingsRef = useRef<DeliveryPlanSettings>(deliverySettings);
   const authorizedEmailsRef = useRef<string[]>(authorizedEmails);
+  const lanConfigRef = useRef<LanStorageConfig>(lanConfig);
   const deliverySyncTimerRef = useRef<number | null>(null);
   const autoReloadedApprovalRef = useRef<boolean>(false);
 
@@ -139,6 +159,10 @@ function AppContent() {
   useEffect(() => {
     authorizedEmailsRef.current = authorizedEmails;
   }, [authorizedEmails]);
+
+  useEffect(() => {
+    lanConfigRef.current = lanConfig;
+  }, [lanConfig]);
 
   // Current logged in admin / staff role
   const [currentAdmin, setCurrentAdmin] = useState<AdminUser>(() => {
@@ -574,7 +598,155 @@ function AppContent() {
     [firebaseUser, showToast]
   );
 
-  // Update Delivery Plan shared settings (immediate local + debounced Cloud save)
+  // Sync local dataset bidirectionally with LAN server (e.g. 192.168.1.45)
+  const syncNowWithLanServer = useCallback(
+    async (
+      overrideConfig?: LanStorageConfig,
+      explicitPayload?: {
+        patients?: PatientRecord[];
+        funerals?: FuneralAssistanceRecord[];
+        donations?: DonationDistributionRecord[];
+        deliverySettings?: DeliveryPlanSettings;
+        deletedFunerals?: string[];
+        deletedDonations?: string[];
+      }
+    ): Promise<boolean> => {
+      const cfg = overrideConfig || lanConfigRef.current;
+      if (!cfg.enabled) {
+        setLanStatus('disabled');
+        setLanStatusInfo(null);
+        return false;
+      }
+
+      setLanStatus('syncing');
+      const pending = getPendingOps();
+      const payload = {
+        patients: explicitPayload?.patients ?? patientsRef.current,
+        funerals: explicitPayload?.funerals ?? funeralsRef.current,
+        donations: explicitPayload?.donations ?? donationsRef.current,
+        deliverySettings: explicitPayload?.deliverySettings ?? deliverySettingsRef.current,
+        deletedFunerals: explicitPayload?.deletedFunerals ?? pending.deletes.funerals,
+        deletedDonations: explicitPayload?.deletedDonations ?? pending.deletes.donations,
+      };
+
+      try {
+        const res = await syncWithLanServer(cfg.serverUrl, payload);
+        setPatients(res.patients);
+        patientsRef.current = res.patients;
+        saveStoredPatients(res.patients);
+
+        setFunerals(res.funerals);
+        funeralsRef.current = res.funerals;
+        saveStoredFunerals(res.funerals);
+
+        setDonations(res.donations);
+        donationsRef.current = res.donations;
+        saveStoredDonations(res.donations);
+
+        if (res.deliverySettings) {
+          setDeliverySettings(res.deliverySettings);
+          deliverySettingsRef.current = res.deliverySettings;
+          saveStoredDeliverySettings(res.deliverySettings);
+        }
+
+        const updatedCfg = saveStoredLanConfig({
+          ...cfg,
+          lastSyncedAt: res.updatedAt || new Date().toISOString(),
+          lastRevision: res.revision,
+        });
+        setLanConfig(updatedCfg);
+        lanConfigRef.current = updatedCfg;
+        setLanStatus('connected');
+        setLanStatusInfo({
+          dataFilePath: res.dataFilePath,
+          counts: {
+            patients: res.patients.length,
+            funerals: res.funerals.length,
+            donations: res.donations.length,
+          },
+        });
+        return true;
+      } catch {
+        const probe = await testLanConnection(cfg.serverUrl);
+        setLanStatus('error');
+        setLanStatusInfo({
+          errorMessage: probe.errorMessage || `ไม่สามารถเชื่อมต่อ ${cfg.serverUrl} ได้`,
+        });
+        return false;
+      }
+    },
+    []
+  );
+
+  // Initial sync & 5-second background LAN revision polling when LAN storage is enabled
+  useEffect(() => {
+    if (!lanConfig.enabled) {
+      setLanStatus('disabled');
+      setLanStatusInfo(null);
+      return;
+    }
+
+    let cancelled = false;
+    syncNowWithLanServer(lanConfig);
+
+    const interval = window.setInterval(async () => {
+      if (cancelled || !lanConfigRef.current.enabled) return;
+      const probe = await testLanConnection(lanConfigRef.current.serverUrl);
+      if (cancelled) return;
+      if (!probe.ok) {
+        setLanStatus('error');
+        setLanStatusInfo({ errorMessage: probe.errorMessage });
+        return;
+      }
+      if (probe.revision !== lanConfigRef.current.lastRevision) {
+        await syncNowWithLanServer(lanConfigRef.current);
+      } else {
+        setLanStatus('connected');
+        setLanStatusInfo({
+          dataFilePath: probe.dataFilePath,
+          counts: probe.counts,
+        });
+      }
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [lanConfig.enabled, lanConfig.serverUrl, syncNowWithLanServer]);
+
+  const handleSaveAndSyncLan = useCallback(
+    async (serverUrl: string, enabled: boolean) => {
+      const normalized = saveStoredLanConfig({
+        ...lanConfigRef.current,
+        serverUrl: normalizeLanServerUrl(serverUrl),
+        enabled,
+        autoSync: true,
+      });
+      setLanConfig(normalized);
+      lanConfigRef.current = normalized;
+
+      if (!enabled) {
+        setLanStatus('disabled');
+        setLanStatusInfo(null);
+        showToast('ปิดการซิงค์เซิร์ฟเวอร์ LAN ชั่วคราวแล้ว', 'info');
+        return;
+      }
+
+      const ok = await syncNowWithLanServer(normalized);
+      if (ok) {
+        showToast(`เชื่อมต่อและซิงค์ข้อมูลกับ ${normalized.serverUrl} สำเร็จแล้ว`, 'success');
+      } else {
+        showToast(
+          `ยังไม่พบเซิร์ฟเวอร์เก็บข้อมูลที่ ${normalized.serverUrl} กรุณาตรวจสอบคำแนะนำในหน้าต่างตั้งค่า`,
+          'warning'
+        );
+      }
+    },
+    [showToast, syncNowWithLanServer]
+  );
+
+  // Update Delivery Plan shared settings (immediate local + debounced Cloud & LAN save)
   const handleUpdateDeliverySettings = useCallback(
     (partial: Partial<DeliveryPlanSettings>) => {
       const nextSettings: DeliveryPlanSettings = {
@@ -587,12 +759,17 @@ function AppContent() {
       saveStoredDeliverySettings(nextSettings);
       setPendingDeliverySettings(true);
 
-      if (!firebaseUser) return;
       if (deliverySyncTimerRef.current) {
         window.clearTimeout(deliverySyncTimerRef.current);
       }
-      setCloudStatus('syncing');
+      if (firebaseUser) {
+        setCloudStatus('syncing');
+      }
       deliverySyncTimerRef.current = window.setTimeout(() => {
+        if (lanConfigRef.current.enabled) {
+          syncNowWithLanServer(lanConfigRef.current, { deliverySettings: deliverySettingsRef.current });
+        }
+        if (!firebaseUser) return;
         saveDeliveryPlanSettingsToCloud(
           deliverySettingsRef.current,
           firebaseUser,
@@ -608,7 +785,7 @@ function AppContent() {
           });
       }, 450);
     },
-    [firebaseUser]
+    [firebaseUser, syncNowWithLanServer]
   );
 
   // Save current admin change
@@ -627,18 +804,19 @@ function AppContent() {
     const safeId = sanitizeFirestoreId(normalized.id, 'pt');
     markPendingUpsert('patients', normalized.id);
 
-    setPatients((prev) => {
-      const existsIndex = prev.findIndex((p) => p.id === normalized.id);
-      let updated: PatientRecord[];
-      if (existsIndex >= 0) {
-        updated = [...prev];
-        updated[existsIndex] = normalized;
-      } else {
-        updated = [normalized, ...prev];
-      }
-      saveStoredPatients(updated);
-      return updated;
-    });
+    const existsIndex = patientsRef.current.findIndex((p) => p.id === normalized.id);
+    const updatedPatients =
+      existsIndex >= 0
+        ? patientsRef.current.map((p, i) => (i === existsIndex ? normalized : p))
+        : [normalized, ...patientsRef.current];
+
+    setPatients(updatedPatients);
+    patientsRef.current = updatedPatients;
+    saveStoredPatients(updatedPatients);
+
+    if (lanConfigRef.current.enabled) {
+      syncNowWithLanServer(lanConfigRef.current, { patients: updatedPatients });
+    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -669,7 +847,7 @@ function AppContent() {
   ) => {
     const nowIso = new Date().toISOString();
     const todayStr = nowIso.slice(0, 10);
-    const existing = patients.find((p) => p.id === patientId);
+    const existing = patientsRef.current.find((p) => p.id === patientId);
     if (!existing) return;
 
     const historyEntry: StatusHistoryLog = {
@@ -691,11 +869,16 @@ function AppContent() {
     const safeId = sanitizeFirestoreId(patientId, 'pt');
     markPendingUpsert('patients', patientId);
 
-    setPatients((prev) => {
-      const updated = prev.map((p) => (p.id === patientId ? modifiedPatient : p));
-      saveStoredPatients(updated);
-      return updated;
-    });
+    const updatedPatients = patientsRef.current.map((p) =>
+      p.id === patientId ? modifiedPatient : p
+    );
+    setPatients(updatedPatients);
+    patientsRef.current = updatedPatients;
+    saveStoredPatients(updatedPatients);
+
+    if (lanConfigRef.current.enabled) {
+      syncNowWithLanServer(lanConfigRef.current, { patients: updatedPatients });
+    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -719,7 +902,7 @@ function AppContent() {
   const handleRestorePatient = (patientId: string) => {
     const nowIso = new Date().toISOString();
     const todayStr = nowIso.slice(0, 10);
-    const existing = patients.find((p) => p.id === patientId);
+    const existing = patientsRef.current.find((p) => p.id === patientId);
     if (!existing) return;
 
     const historyEntry: StatusHistoryLog = {
@@ -741,11 +924,16 @@ function AppContent() {
     const safeId = sanitizeFirestoreId(patientId, 'pt');
     markPendingUpsert('patients', patientId);
 
-    setPatients((prev) => {
-      const updated = prev.map((p) => (p.id === patientId ? modifiedPatient : p));
-      saveStoredPatients(updated);
-      return updated;
-    });
+    const updatedPatients = patientsRef.current.map((p) =>
+      p.id === patientId ? modifiedPatient : p
+    );
+    setPatients(updatedPatients);
+    patientsRef.current = updatedPatients;
+    saveStoredPatients(updatedPatients);
+
+    if (lanConfigRef.current.enabled) {
+      syncNowWithLanServer(lanConfigRef.current, { patients: updatedPatients });
+    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -768,7 +956,7 @@ function AppContent() {
   // Record a monthly delivery
   const handleRecordDelivery = (patientId: string, delivery: MonthlyDelivery) => {
     const nowIso = new Date().toISOString();
-    const existing = patients.find((p) => p.id === patientId);
+    const existing = patientsRef.current.find((p) => p.id === patientId);
     if (!existing) return;
 
     const modifiedPatient: PatientRecord = {
@@ -780,11 +968,16 @@ function AppContent() {
     const safeId = sanitizeFirestoreId(patientId, 'pt');
     markPendingUpsert('patients', patientId);
 
-    setPatients((prev) => {
-      const updated = prev.map((p) => (p.id === patientId ? modifiedPatient : p));
-      saveStoredPatients(updated);
-      return updated;
-    });
+    const updatedPatients = patientsRef.current.map((p) =>
+      p.id === patientId ? modifiedPatient : p
+    );
+    setPatients(updatedPatients);
+    patientsRef.current = updatedPatients;
+    saveStoredPatients(updatedPatients);
+
+    if (lanConfigRef.current.enabled) {
+      syncNowWithLanServer(lanConfigRef.current, { patients: updatedPatients });
+    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -815,18 +1008,19 @@ function AppContent() {
     clearPendingDelete('funerals', safeId);
     markPendingUpsert('funerals', normalized.id);
 
-    setFunerals((prev) => {
-      const idx = prev.findIndex((f) => f.id === normalized.id);
-      let updated: FuneralAssistanceRecord[];
-      if (idx >= 0) {
-        updated = [...prev];
-        updated[idx] = normalized;
-      } else {
-        updated = [normalized, ...prev];
-      }
-      saveStoredFunerals(updated);
-      return updated;
-    });
+    const idx = funeralsRef.current.findIndex((f) => f.id === normalized.id);
+    const updatedFunerals =
+      idx >= 0
+        ? funeralsRef.current.map((f, i) => (i === idx ? normalized : f))
+        : [normalized, ...funeralsRef.current];
+
+    setFunerals(updatedFunerals);
+    funeralsRef.current = updatedFunerals;
+    saveStoredFunerals(updatedFunerals);
+
+    if (lanConfigRef.current.enabled) {
+      syncNowWithLanServer(lanConfigRef.current, { funerals: updatedFunerals });
+    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -853,11 +1047,19 @@ function AppContent() {
     clearPendingUpsert('funerals', safeId);
     markPendingDelete('funerals', id);
 
-    setFunerals((prev) => {
-      const updated = prev.filter((f) => f.id !== id);
-      saveStoredFunerals(updated);
-      return updated;
-    });
+    const updatedFunerals = funeralsRef.current.filter((f) => f.id !== id);
+    setFunerals(updatedFunerals);
+    funeralsRef.current = updatedFunerals;
+    saveStoredFunerals(updatedFunerals);
+
+    if (lanConfigRef.current.enabled) {
+      const pending = getPendingOps();
+      syncNowWithLanServer(lanConfigRef.current, {
+        funerals: updatedFunerals,
+        deletedFunerals: Array.from(new Set([...pending.deletes.funerals, id, safeId])),
+      });
+    }
+
     if (firebaseUser) {
       setCloudStatus('syncing');
       deleteFuneralFromCloud(id, firebaseUser)
@@ -889,18 +1091,19 @@ function AppContent() {
     clearPendingDelete('donations', safeId);
     markPendingUpsert('donations', normalized.id);
 
-    setDonations((prev) => {
-      const idx = prev.findIndex((d) => d.id === normalized.id);
-      let updated: DonationDistributionRecord[];
-      if (idx >= 0) {
-        updated = [...prev];
-        updated[idx] = normalized;
-      } else {
-        updated = [normalized, ...prev];
-      }
-      saveStoredDonations(updated);
-      return updated;
-    });
+    const idx = donationsRef.current.findIndex((d) => d.id === normalized.id);
+    const updatedDonations =
+      idx >= 0
+        ? donationsRef.current.map((d, i) => (i === idx ? normalized : d))
+        : [normalized, ...donationsRef.current];
+
+    setDonations(updatedDonations);
+    donationsRef.current = updatedDonations;
+    saveStoredDonations(updatedDonations);
+
+    if (lanConfigRef.current.enabled) {
+      syncNowWithLanServer(lanConfigRef.current, { donations: updatedDonations });
+    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -927,11 +1130,19 @@ function AppContent() {
     clearPendingUpsert('donations', safeId);
     markPendingDelete('donations', id);
 
-    setDonations((prev) => {
-      const updated = prev.filter((d) => d.id !== id);
-      saveStoredDonations(updated);
-      return updated;
-    });
+    const updatedDonations = donationsRef.current.filter((d) => d.id !== id);
+    setDonations(updatedDonations);
+    donationsRef.current = updatedDonations;
+    saveStoredDonations(updatedDonations);
+
+    if (lanConfigRef.current.enabled) {
+      const pending = getPendingOps();
+      syncNowWithLanServer(lanConfigRef.current, {
+        donations: updatedDonations,
+        deletedDonations: Array.from(new Set([...pending.deletes.donations, id, safeId])),
+      });
+    }
+
     if (firebaseUser) {
       setCloudStatus('syncing');
       deleteDonationFromCloud(id, firebaseUser)
@@ -965,22 +1176,33 @@ function AppContent() {
       importedPatients.forEach((p) => markPendingUpsert('patients', p.id));
       nextPatients = mergeRecordsNonDestructively(importedPatients, patientsRef.current);
       setPatients(nextPatients);
+      patientsRef.current = nextPatients;
       saveStoredPatients(nextPatients);
     }
     if (importedFunerals && Array.isArray(importedFunerals)) {
       importedFunerals.forEach((f) => markPendingUpsert('funerals', f.id));
       nextFunerals = mergeRecordsNonDestructively(importedFunerals, funeralsRef.current);
       setFunerals(nextFunerals);
+      funeralsRef.current = nextFunerals;
       saveStoredFunerals(nextFunerals);
     }
     if (importedDonations && Array.isArray(importedDonations)) {
       importedDonations.forEach((d) => markPendingUpsert('donations', d.id));
       nextDonations = mergeRecordsNonDestructively(importedDonations, donationsRef.current);
       setDonations(nextDonations);
+      donationsRef.current = nextDonations;
       saveStoredDonations(nextDonations);
     }
 
     setCurrentTab('list');
+
+    if (lanConfigRef.current.enabled) {
+      await syncNowWithLanServer(lanConfigRef.current, {
+        patients: nextPatients,
+        funerals: nextFunerals,
+        donations: nextDonations,
+      });
+    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -1075,12 +1297,16 @@ function AppContent() {
         pendingAccessRequests={pendingAccessRequests}
         onApproveAccessRequest={handleApproveAccessRequest}
         onRejectAccessRequest={handleRejectAccessRequest}
+        lanConfig={lanConfig}
+        lanStatus={lanStatus}
+        lanStatusInfo={lanStatusInfo}
+        onSaveAndSyncLan={handleSaveAndSyncLan}
       />
 
       {/* Main Content Areas */}
       <main className="flex-1 pb-16">
         {/* Cross-Device Cloud Sync Onboarding & Diagnostic Banners */}
-        {!firebaseUser && (
+        {!firebaseUser && lanStatus !== 'connected' && (
           <div className="no-print max-w-7xl mx-auto px-3 sm:px-4 pt-4">
             <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
               <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">

@@ -20,6 +20,7 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
+  Server,
 } from 'lucide-react';
 import {
   ADMIN_USERS,
@@ -28,6 +29,7 @@ import {
   FuneralAssistanceRecord,
   DonationDistributionRecord,
   AccessRequestRecord,
+  LanStorageConfig,
 } from '../types';
 import {
   exportToCsv,
@@ -69,6 +71,14 @@ interface HeaderProps {
   pendingAccessRequests?: AccessRequestRecord[];
   onApproveAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
   onRejectAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
+  lanConfig?: LanStorageConfig;
+  lanStatus?: 'disabled' | 'syncing' | 'connected' | 'error';
+  lanStatusInfo?: {
+    dataFilePath?: string;
+    errorMessage?: string;
+    counts?: { patients: number; funerals: number; donations: number };
+  } | null;
+  onSaveAndSyncLan?: (serverUrl: string, enabled: boolean) => Promise<void>;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -98,6 +108,10 @@ export const Header: React.FC<HeaderProps> = ({
   pendingAccessRequests = [],
   onApproveAccessRequest,
   onRejectAccessRequest,
+  lanConfig,
+  lanStatus = 'disabled',
+  lanStatusInfo = null,
+  onSaveAndSyncLan,
 }) => {
   const { showToast } = useUiFeedback();
   const [isAdminDropdownOpen, setIsAdminDropdownOpen] = useState(false);
@@ -340,6 +354,33 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {/* LAN Server (192.168.1.45) Quick Button */}
+          <button
+            type="button"
+            onClick={() => setIsLoginModalOpen(true)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition cursor-pointer ${
+              lanStatus === 'connected'
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                : lanStatus === 'syncing'
+                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                : lanStatus === 'error'
+                ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+                : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+            }`}
+            title={`เซิร์ฟเวอร์ LAN: ${lanConfig?.serverUrl || 'http://192.168.1.45:3000'} • คลิกเพื่อตั้งค่าหรือซิงค์`}
+          >
+            <Server
+              className={`w-3 h-3 ${
+                lanStatus === 'connected'
+                  ? 'text-emerald-600'
+                  : lanStatus === 'error'
+                  ? 'text-red-600'
+                  : 'text-slate-600'
+              }`}
+            />
+            <span className="hidden md:inline font-mono">192.168.1.45</span>
+          </button>
+
           {/* Online badge */}
           <div className="hidden xl:flex items-center text-[11px]">
             {isOnline ? (
@@ -576,6 +617,10 @@ export const Header: React.FC<HeaderProps> = ({
         pendingAccessRequests={pendingAccessRequests}
         onApproveAccessRequest={onApproveAccessRequest}
         onRejectAccessRequest={onRejectAccessRequest}
+        lanConfig={lanConfig}
+        lanStatus={lanStatus}
+        lanStatusInfo={lanStatusInfo}
+        onSaveAndSyncLan={onSaveAndSyncLan}
       />
     </header>
   );

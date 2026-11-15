@@ -522,3 +522,12 @@ export interface AccessRequestRecord {
   reviewedBy?: string;
 }
 
+export interface LanStorageConfig {
+  enabled: boolean;
+  serverUrl: string;
+  autoSync: boolean;
+  lastSyncedAt?: string;
+  lastRevision?: number;
+}
+
+

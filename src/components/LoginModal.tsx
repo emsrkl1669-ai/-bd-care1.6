@@ -20,9 +20,12 @@ import {
   UserPlus,
   Check,
   Clock,
+  Server,
+  Download,
 } from 'lucide-react';
-import { ADMIN_USERS, AdminUser, AccessRequestRecord } from '../types';
+import { ADMIN_USERS, AdminUser, AccessRequestRecord, LanStorageConfig } from '../types';
 import { SUPER_ADMIN_EMAIL, isSuperAdminUser } from '../firebase';
+import { DEFAULT_LAN_SERVER_URL, downloadStandaloneLanServerScript } from '../services/lanSync';
 
 interface LoginModalProps {
   currentAdmin: AdminUser;
@@ -43,6 +46,14 @@ interface LoginModalProps {
   pendingAccessRequests?: AccessRequestRecord[];
   onApproveAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
   onRejectAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
+  lanConfig?: LanStorageConfig;
+  lanStatus?: 'disabled' | 'syncing' | 'connected' | 'error';
+  lanStatusInfo?: {
+    dataFilePath?: string;
+    errorMessage?: string;
+    counts?: { patients: number; funerals: number; donations: number };
+  } | null;
+  onSaveAndSyncLan?: (serverUrl: string, enabled: boolean) => Promise<void>;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
@@ -64,6 +75,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   pendingAccessRequests = [],
   onApproveAccessRequest,
   onRejectAccessRequest,
+  lanConfig,
+  lanStatus = 'disabled',
+  lanStatusInfo = null,
+  onSaveAndSyncLan,
 }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -74,6 +89,16 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [isSavingEmails, setIsSavingEmails] = useState(false);
   const [processingReqUid, setProcessingReqUid] = useState<string | null>(null);
   const [teamMsg, setTeamMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [lanUrlInput, setLanUrlInput] = useState(lanConfig?.serverUrl || DEFAULT_LAN_SERVER_URL);
+  const [lanEnabledInput, setLanEnabledInput] = useState<boolean>(Boolean(lanConfig?.enabled));
+  const [isSavingLan, setIsSavingLan] = useState(false);
+
+  React.useEffect(() => {
+    if (isOpen && lanConfig) {
+      setLanUrlInput(lanConfig.serverUrl || DEFAULT_LAN_SERVER_URL);
+      setLanEnabledInput(Boolean(lanConfig.enabled));
+    }
+  }, [isOpen, lanConfig]);
 
   if (!isOpen) return null;
 
@@ -416,6 +441,117 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </div>
             )}
           </div>
+
+          {/* Local LAN Server Storage Card (192.168.1.45) */}
+          {onSaveAndSyncLan && (
+            <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/60 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                  <Server className="w-4 h-4 text-emerald-700" />
+                  <span>ที่เก็บข้อมูลเซิร์ฟเวอร์ LAN (192.168.1.45)</span>
+                </span>
+                <span
+                  className={`text-[10.5px] font-bold px-2 py-0.5 rounded shrink-0 ${
+                    lanStatus === 'syncing'
+                      ? 'bg-blue-100 text-blue-800'
+                      : lanStatus === 'connected'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : lanStatus === 'error'
+                      ? 'bg-red-100 text-red-800'
+                      : 'bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  {lanStatus === 'syncing'
+                    ? 'กำลังซิงค์ LAN...'
+                    : lanStatus === 'connected'
+                    ? 'เชื่อมต่อ LAN แล้ว'
+                    : lanStatus === 'error'
+                    ? 'เชื่อมต่อไม่ได้'
+                    : 'ยังไม่เปิดใช้งาน'}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
+                    ที่อยู่เซิร์ฟเวอร์ LAN (IP / URL)
+                  </label>
+                  <input
+                    type="text"
+                    value={lanUrlInput}
+                    onChange={(e) => setLanUrlInput(e.target.value)}
+                    placeholder="http://192.168.1.45:3000"
+                    className="w-full px-2.5 py-1.5 text-xs bg-white border border-emerald-200 rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <label className="flex items-center gap-2 text-xs text-emerald-950 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={lanEnabledInput}
+                    onChange={(e) => setLanEnabledInput(e.target.checked)}
+                    className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="font-semibold">
+                    บันทึกและซิงค์ข้อมูลทั้งหมดไปที่เครื่องนี้ (192.168.1.45) อัตโนมัติ
+                  </span>
+                </label>
+
+                {lanStatusInfo?.dataFilePath && lanStatus === 'connected' && (
+                  <div className="p-2 bg-white border border-emerald-200 rounded-lg text-[11px] text-emerald-900 space-y-0.5">
+                    <div className="font-semibold">
+                      ไฟล์ฐานข้อมูลบนเซิร์ฟเวอร์: <span className="font-mono">{lanStatusInfo.dataFilePath}</span>
+                    </div>
+                    {lanStatusInfo.counts && (
+                      <div className="text-slate-600">
+                        ผู้ป่วย {lanStatusInfo.counts.patients} ราย • อนุเคราะห์เผาศพ {lanStatusInfo.counts.funerals} ราย • บริจาคสิ่งของ {lanStatusInfo.counts.donations} ราย
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {lanStatusInfo?.errorMessage && lanStatus === 'error' && (
+                  <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-[11px] text-red-800 leading-relaxed">
+                    {lanStatusInfo.errorMessage}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isSavingLan}
+                    onClick={async () => {
+                      setIsSavingLan(true);
+                      try {
+                        await onSaveAndSyncLan(lanUrlInput, lanEnabledInput);
+                      } finally {
+                        setIsSavingLan(false);
+                      }
+                    }}
+                    className="flex-1 min-w-[180px] py-1.5 px-3 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSavingLan || lanStatus === 'syncing' ? 'animate-spin' : ''}`} />
+                    <span>บันทึก & ซิงค์กับ 192.168.1.45 ทันที</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadStandaloneLanServerScript()}
+                    className="py-1.5 px-3 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    title="ดาวน์โหลดไฟล์ bdcare-lan-server.mjs เพื่อไปรันบนเครื่อง 192.168.1.45 ด้วยคำสั่ง node bdcare-lan-server.mjs"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>โหลดตัวเซิร์ฟเวอร์ (.mjs)</span>
+                  </button>
+                </div>
+
+                <p className="text-[10.5px] text-emerald-800/90 leading-relaxed">
+                  วิธีติดตั้งที่เครื่อง 192.168.1.45: ดาวน์โหลดไฟล์ <strong>bdcare-lan-server.mjs</strong> ไปวางบนเครื่อง 192.168.1.45 แล้วรัน{' '}
+                  <code className="bg-white/80 px-1 py-0.5 rounded font-mono">node bdcare-lan-server.mjs</code> (ข้อมูลจะถูกเก็บในโฟลเดอร์{' '}
+                  <code className="bg-white/80 px-1 py-0.5 rounded font-mono">bdcare-data/bdcare-db.json</code> พร้อมไฟล์สำรองอัตโนมัติ)
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Currently logged-in status badge */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between text-xs">
