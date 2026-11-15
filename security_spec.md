@@ -5,15 +5,16 @@
 2. **Ownership & Role Integrity**:
    - Super Admin is bootstrapped exclusively from verified email `emsrkl1669@gmail.com`.
    - Additional staff permissions live in `/admins/{uid}` and may only be created, updated, or deleted by the Super Admin.
+   - Workspace team sharing is managed by Super Admin via `/settings/workspace` (`authorizedEmails`) and propagated via `authorizedEmails` allowlists on `/settings/delivery_plan`, `/patients/{patientId}`, `/funerals/{funeralId}`, `/donations/{donationId}`, and their subcollections. Non-superadmin members cannot alter `authorizedEmails`.
    - Every root record in `/patients/{patientId}`, `/funerals/{funeralId}`, and `/donations/{donationId}` MUST contain an immutable `ownerUid` matching `request.auth.uid` on creation.
 3. **Master Gate on Subcollections**:
-   - Subcollection documents (`/patients/{patientId}/deliveries/{deliveryId}`, `/patients/{patientId}/media/{mediaId}`, `/funerals/{funeralId}/media/{mediaId}`, `/donations/{donationId}/media/{mediaId}`) MUST verify parent existence and parent ownership (`get(...).data.ownerUid == request.auth.uid || isSuperAdmin()`).
+   - Subcollection documents (`/patients/{patientId}/deliveries/{deliveryId}`, `/patients/{patientId}/media/{mediaId}`, `/funerals/{funeralId}/media/{mediaId}`, `/donations/{donationId}/media/{mediaId}`) MUST verify parent existence and parent ownership or shared team membership (`isSuperAdmin()` or `ownerUid == request.auth.uid` or `request.auth.token.email in authorizedEmails`).
 4. **Temporal & Immutable Fields**:
    - `serverCreatedAt == request.time` and `serverUpdatedAt == request.time` on `create`.
    - `serverCreatedAt == resource.data.serverCreatedAt`, `ownerUid == resource.data.ownerUid`, `id == resource.data.id`, and `serverUpdatedAt == request.time` on `update`.
 5. **PII & Resource Boundaries**:
    - Zero blanket reads (`allow read: if isSignedIn()` is forbidden).
-   - `allow list` validates `isSuperAdmin() || resource.data.ownerUid == request.auth.uid` directly on `resource.data` without `get()`/`exists()`.
+   - `allow list` validates `isSuperAdmin() || resource.data.ownerUid == request.auth.uid || isSharedTeamMember(resource.data)` directly on `resource.data` without `get()`/`exists()`.
    - Every string and list enforces explicit `.size()` boundaries; all attachment binaries live in `/media/{mediaId}` subcollections bounded under 850 KB per document so no Firestore document ever hits the 1 MiB limit.
 6. **Terminal State Protection**:
    - Funeral and Donation records reaching terminal states (`completed`, `rejected`, `cancelled`) block non-superadmin mutations (`isSuperAdmin()` override exists for authorized administrative corrections).

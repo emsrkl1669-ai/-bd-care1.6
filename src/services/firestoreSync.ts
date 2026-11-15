@@ -8,12 +8,14 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   deleteDoc,
   where,
   Unsubscribe,
 } from 'firebase/firestore';
 import {
   db,
+  SUPER_ADMIN_EMAIL,
   OperationType,
   handleFirestoreError,
   isSuperAdminUser,
@@ -28,8 +30,48 @@ import {
   DonationDistributionRecord,
   DonationPhoto,
   DonationDocument,
+  DeliveryPlanSettings,
 } from '../types';
 import { compressImageDataUrl, sanitizeFirestoreId } from '../utils/image';
+import {
+  getPendingOps,
+  getKnownSyncedIds,
+  addKnownSyncedIds,
+  removeKnownSyncedId,
+  clearPendingUpsert,
+  clearPendingDelete,
+  setPendingDeliverySettings,
+  saveStoredAuthorizedEmails,
+} from '../utils/storage';
+
+function safeNum(val: unknown, fallback: number = 0): number {
+  const n = Number(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function safeCoord(val: unknown): number | null {
+  if (val === null || val === undefined || val === '') return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function normalizeAuthorizedEmails(
+  emails: string[] = [],
+  currentUser?: User | null
+): string[] {
+  const set = new Set<string>([SUPER_ADMIN_EMAIL.toLowerCase()]);
+  for (const e of emails) {
+    const clean = (e || '').trim().toLowerCase();
+    if (clean && clean.includes('@') && clean.length <= 200) {
+      set.add(clean);
+    }
+  }
+  if (currentUser?.email && currentUser.emailVerified) {
+    const uEmail = currentUser.email.trim().toLowerCase();
+    if (uEmail.includes('@')) set.add(uEmail);
+  }
+  return Array.from(set).slice(0, 20);
+}
 
 /**
  * Recursively strip undefined values from objects (preserving null only where explicitly set, e.g. lat/lng)
@@ -94,9 +136,7 @@ export async function ensureSuperAdminDirectory(user: User): Promise<void> {
 }
 
 /**
- * Non-destructive merge helper combining Cloud + Local arrays by `id`.
- * Keeps the record with the newer `updatedAt` ISO string, and always retains
- * records present on only one side (never deletes existing local data).
+ * Non-destructive merge helper for manual JSON backup imports.
  */
 export function mergeRecordsNonDestructively<T extends { id: string; updatedAt?: string; createdAt?: string }>(
   cloudItems: T[],
@@ -127,6 +167,56 @@ export function mergeRecordsNonDestructively<T extends { id: string; updatedAt?:
   return Array.from(map.values());
 }
 
+/**
+ * Authoritative cross-device reconciliation:
+ * - Applies Cloud updates immediately regardless of device clock skew.
+ * - Removes local items that were previously synced but deleted on another device.
+ * - Preserves local unsynced offline edits/creations until uploaded.
+ */
+export function reconcileWithCloudSnapshot<T extends { id: string; updatedAt?: string; createdAt?: string }>(
+  cloudItems: T[],
+  prevLocal: T[],
+  pendingUpsertIds: Set<string>,
+  pendingDeleteIds: Set<string>,
+  knownSyncedIds: Set<string>,
+  isAuthoritativeServerSnapshot: boolean
+): T[] {
+  const localMap = new Map<string, T>();
+  for (const item of prevLocal) {
+    if (pendingDeleteIds.has(item.id)) continue;
+    localMap.set(item.id, item);
+  }
+
+  const resultMap = new Map<string, T>();
+
+  for (const cloudItem of cloudItems) {
+    if (pendingDeleteIds.has(cloudItem.id)) continue;
+    const localItem = localMap.get(cloudItem.id);
+    if (localItem && pendingUpsertIds.has(cloudItem.id)) {
+      const cloudTime = Date.parse(cloudItem.updatedAt || cloudItem.createdAt || '') || 0;
+      const localTime = Date.parse(localItem.updatedAt || localItem.createdAt || '') || 0;
+      resultMap.set(cloudItem.id, localTime > cloudTime ? localItem : cloudItem);
+    } else {
+      resultMap.set(cloudItem.id, cloudItem);
+    }
+  }
+
+  // Keep any local item that has NOT yet been synced to Cloud (or has pending local edits)
+  for (const localItem of prevLocal) {
+    if (pendingDeleteIds.has(localItem.id)) continue;
+    if (resultMap.has(localItem.id)) continue;
+    if (pendingUpsertIds.has(localItem.id)) {
+      resultMap.set(localItem.id, localItem);
+      continue;
+    }
+    if (!isAuthoritativeServerSnapshot || !knownSyncedIds.has(localItem.id)) {
+      resultMap.set(localItem.id, localItem);
+    }
+  }
+
+  return Array.from(resultMap.values());
+}
+
 // ============================================================================
 // Serializers (Strictly aligned with firestore.rules allowlists)
 // ============================================================================
@@ -134,6 +224,7 @@ export function mergeRecordsNonDestructively<T extends { id: string; updatedAt?:
 function serializePatientParent(
   patient: PatientRecord,
   ownerUid: string,
+  authorizedEmails: string[] | undefined,
   existingServerCreatedAt?: any,
   isUpdate?: boolean
 ) {
@@ -143,78 +234,85 @@ function serializePatientParent(
   const payload: Record<string, any> = {
     id,
     ownerUid,
+    ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
     code: (patient.code || `BDC-${id}`).slice(0, 40),
-    admissionDate: patient.admissionDate || nowIso.slice(0, 10),
+    admissionDate: (patient.admissionDate || nowIso.slice(0, 10)).slice(0, 32),
     status: patient.status || 'active',
-    statusReason: patient.statusReason,
-    statusHistory: patient.statusHistory,
-    nationalId: patient.nationalId || '',
-    title: patient.title || '',
+    statusReason: patient.statusReason !== undefined ? String(patient.statusReason).slice(0, 1000) : undefined,
+    statusHistory: Array.isArray(patient.statusHistory) ? patient.statusHistory.slice(-50) : undefined,
+    nationalId: (patient.nationalId || '').slice(0, 30),
+    title: (patient.title || '').slice(0, 30),
     fullName: (patient.fullName || 'ไม่ระบุชื่อ').slice(0, 200),
-    birthDate: patient.birthDate,
-    age: Number(patient.age || 0),
+    birthDate: patient.birthDate !== undefined ? String(patient.birthDate).slice(0, 32) : undefined,
+    age: safeNum(patient.age, 0),
     gender: patient.gender === 'หญิง' ? 'หญิง' : 'ชาย',
-    phone: patient.phone || '',
-    caregiverName: patient.caregiverName || '',
-    caregiverRelation: patient.caregiverRelation || '',
-    caregiverPhone: patient.caregiverPhone || '',
+    phone: (patient.phone || '').slice(0, 50),
+    caregiverName: (patient.caregiverName || '').slice(0, 200),
+    caregiverRelation: (patient.caregiverRelation || '').slice(0, 100),
+    caregiverPhone: (patient.caregiverPhone || '').slice(0, 50),
     idAddress: patient.idAddress,
     isSameAddress: Boolean(patient.isSameAddress),
     currentAddress: patient.currentAddress,
-    latitude: patient.latitude ?? null,
-    longitude: patient.longitude ?? null,
-    ...(typeof patient.locationAccuracy === 'number' && !isNaN(patient.locationAccuracy)
+    latitude: safeCoord(patient.latitude),
+    longitude: safeCoord(patient.longitude),
+    ...(typeof patient.locationAccuracy === 'number' && Number.isFinite(patient.locationAccuracy)
       ? { locationAccuracy: patient.locationAccuracy }
       : {}),
-    landmarkNote: patient.landmarkNote || '',
-    googleMapsUrl: patient.googleMapsUrl || '',
+    landmarkNote: (patient.landmarkNote || '').slice(0, 1000),
+    googleMapsUrl: (patient.googleMapsUrl || '').slice(0, 500),
     qrCodeDataUrl:
       patient.qrCodeDataUrl && patient.qrCodeDataUrl.length <= 40000
         ? patient.qrCodeDataUrl
         : '',
     mobilityLevel: patient.mobilityLevel || 'bedridden',
-    chronicDiseases: patient.chronicDiseases || '',
-    symptomsDetail: patient.symptomsDetail || '',
+    chronicDiseases: (patient.chronicDiseases || '').slice(0, 1000),
+    symptomsDetail: (patient.symptomsDetail || '').slice(0, 2000),
     disabilityCard: patient.disabilityCard,
-    specialNeeds: patient.specialNeeds || [],
-    familyMembersTotal: Number(patient.familyMembersTotal || 0),
-    familyMembersMale: Number(patient.familyMembersMale || 0),
-    familyMembersFemale: Number(patient.familyMembersFemale || 0),
-    incomeSalary: Number(patient.incomeSalary || 0),
-    incomeDisability: Number(patient.incomeDisability || 0),
-    incomeElderly: Number(patient.incomeElderly || 0),
-    incomeStateWelfare: Number(patient.incomeStateWelfare || 0),
-    incomeOther: Number(patient.incomeOther || 0),
-    expenseRentHouse: Number(patient.expenseRentHouse || 0),
-    expenseRentLand: Number(patient.expenseRentLand || 0),
-    expenseLiving: Number(patient.expenseLiving || 0),
-    expenseMedicalTravel: Number(patient.expenseMedicalTravel || 0),
-    expenseDebt: Number(patient.expenseDebt || 0),
-    expenseOther: Number(patient.expenseOther || 0),
-    monthlyExpense: Number(patient.monthlyExpense || 0),
-    netIncome: Number(patient.netIncome || 0),
-    economicNote: patient.economicNote || '',
+    specialNeeds: Array.isArray(patient.specialNeeds) ? patient.specialNeeds.slice(0, 20) : [],
+    familyMembersTotal: safeNum(patient.familyMembersTotal, 0),
+    familyMembersMale: safeNum(patient.familyMembersMale, 0),
+    familyMembersFemale: safeNum(patient.familyMembersFemale, 0),
+    incomeSalary: safeNum(patient.incomeSalary, 0),
+    incomeDisability: safeNum(patient.incomeDisability, 0),
+    incomeElderly: safeNum(patient.incomeElderly, 0),
+    incomeStateWelfare: safeNum(patient.incomeStateWelfare, 0),
+    incomeOther: safeNum(patient.incomeOther, 0),
+    expenseRentHouse:
+      patient.expenseRentHouse !== undefined ? safeNum(patient.expenseRentHouse, 0) : undefined,
+    expenseRentLand:
+      patient.expenseRentLand !== undefined ? safeNum(patient.expenseRentLand, 0) : undefined,
+    expenseLiving:
+      patient.expenseLiving !== undefined ? safeNum(patient.expenseLiving, 0) : undefined,
+    expenseMedicalTravel:
+      patient.expenseMedicalTravel !== undefined ? safeNum(patient.expenseMedicalTravel, 0) : undefined,
+    expenseDebt:
+      patient.expenseDebt !== undefined ? safeNum(patient.expenseDebt, 0) : undefined,
+    expenseOther:
+      patient.expenseOther !== undefined ? safeNum(patient.expenseOther, 0) : undefined,
+    monthlyExpense: safeNum(patient.monthlyExpense, 0),
+    netIncome: safeNum(patient.netIncome, 0),
+    economicNote: (patient.economicNote || '').slice(0, 1000),
     helpCashEnabled: Boolean(patient.helpCashEnabled),
-    helpCashAmount: Number(patient.helpCashAmount || 0),
+    helpCashAmount: safeNum(patient.helpCashAmount, 0),
     helpDiaperSize: patient.helpDiaperSize || 'NONE',
-    helpDiaperPacks: Number(patient.helpDiaperPacks || 0),
-    helpRicePacks: Number(patient.helpRicePacks || 0),
+    helpDiaperPacks: safeNum(patient.helpDiaperPacks, 0),
+    helpRicePacks: safeNum(patient.helpRicePacks, 0),
     helpWaterSize: patient.helpWaterSize || '1.5L',
-    helpWaterPacks: Number(patient.helpWaterPacks || 0),
-    helpOtherSupplies: patient.helpOtherSupplies || '',
-    vulnerabilityScore: Number(patient.vulnerabilityScore || 0),
-    vulnerabilityLevel: patient.vulnerabilityLevel || '',
+    helpWaterPacks: safeNum(patient.helpWaterPacks, 0),
+    helpOtherSupplies: (patient.helpOtherSupplies || '').slice(0, 500),
+    vulnerabilityScore: safeNum(patient.vulnerabilityScore, 0),
+    vulnerabilityLevel: (patient.vulnerabilityLevel || '').slice(0, 100),
     dimensionScores: patient.dimensionScores,
-    socialWorkerOpinion: patient.socialWorkerOpinion || '',
-    aiSuggestions: patient.aiSuggestions || '',
-    interviewerName: patient.interviewerName || '',
-    interviewerPosition: patient.interviewerPosition || '',
-    approverName: patient.approverName || '',
-    approverPosition: patient.approverPosition || '',
-    presidentName: patient.presidentName || '',
-    presidentPosition: patient.presidentPosition || '',
-    createdAt: patient.createdAt || nowIso,
-    updatedAt: patient.updatedAt || nowIso,
+    socialWorkerOpinion: (patient.socialWorkerOpinion || '').slice(0, 3000),
+    aiSuggestions: (patient.aiSuggestions || '').slice(0, 3000),
+    interviewerName: (patient.interviewerName || '').slice(0, 200),
+    interviewerPosition: (patient.interviewerPosition || '').slice(0, 200),
+    approverName: (patient.approverName || '').slice(0, 200),
+    approverPosition: (patient.approverPosition || '').slice(0, 200),
+    presidentName: (patient.presidentName || '').slice(0, 200),
+    presidentPosition: (patient.presidentPosition || '').slice(0, 200),
+    createdAt: (patient.createdAt || nowIso).slice(0, 64),
+    updatedAt: (patient.updatedAt || nowIso).slice(0, 64),
     serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   };
@@ -226,6 +324,7 @@ async function serializeDeliveryDoc(
   delivery: MonthlyDelivery,
   patientId: string,
   ownerUid: string,
+  authorizedEmails: string[] | undefined,
   existingServerCreatedAt?: any,
   isUpdate?: boolean
 ) {
@@ -247,21 +346,22 @@ async function serializeDeliveryDoc(
     id,
     patientId,
     ownerUid,
-    deliveryDate: delivery.deliveryDate || new Date().toISOString().slice(0, 10),
-    monthYearLabel: delivery.monthYearLabel || '',
-    cashAmount: Number(delivery.cashAmount || 0),
+    ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
+    deliveryDate: (delivery.deliveryDate || new Date().toISOString().slice(0, 10)).slice(0, 32),
+    monthYearLabel: (delivery.monthYearLabel || '').slice(0, 80),
+    cashAmount: safeNum(delivery.cashAmount, 0),
     cashGiven: Boolean(delivery.cashGiven),
     diaperSize: delivery.diaperSize || 'NONE',
-    diaperPacks: Number(delivery.diaperPacks || 0),
-    ricePacks: Number(delivery.ricePacks || 0),
-    waterPacks: Number(delivery.waterPacks || 0),
+    diaperPacks: safeNum(delivery.diaperPacks, 0),
+    ricePacks: safeNum(delivery.ricePacks, 0),
+    waterPacks: safeNum(delivery.waterPacks, 0),
     waterSize: delivery.waterSize || '1.5L',
-    otherItems: delivery.otherItems || '',
+    otherItems: (delivery.otherItems || '').slice(0, 500),
     receivedBy: (delivery.receivedBy || 'ผู้ป่วย/ผู้ดูแล').slice(0, 200),
-    recipientRelation: delivery.recipientRelation || '',
-    officerName: delivery.officerName || '',
+    recipientRelation: (delivery.recipientRelation || '').slice(0, 100),
+    officerName: (delivery.officerName || '').slice(0, 200),
     photoUrl: safePhotoUrl,
-    notes: delivery.notes || '',
+    notes: (delivery.notes || '').slice(0, 500),
     serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
@@ -283,6 +383,7 @@ async function serializeMediaDoc(
   parentId: string,
   kind: 'photo' | 'document',
   ownerUid: string,
+  authorizedEmails: string[] | undefined,
   existingServerCreatedAt?: any,
   isUpdate?: boolean
 ) {
@@ -304,13 +405,14 @@ async function serializeMediaDoc(
     id,
     parentId,
     ownerUid,
+    ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
     kind,
-    category: media.category,
+    category: media.category?.slice(0, 64),
     title: media.title?.slice(0, 200),
     fileName: media.fileName?.slice(0, 255),
     fileType: media.fileType?.slice(0, 120),
     dataUrl: safeDataUrl,
-    fileSize: typeof media.fileSize === 'number' ? media.fileSize : undefined,
+    fileSize: typeof media.fileSize === 'number' && Number.isFinite(media.fileSize) ? media.fileSize : undefined,
     caption: media.caption?.slice(0, 500),
     timestamp: media.timestamp?.slice(0, 100),
     uploadDate: media.uploadDate?.slice(0, 64),
@@ -322,6 +424,7 @@ async function serializeMediaDoc(
 function serializeFuneralParent(
   record: FuneralAssistanceRecord,
   ownerUid: string,
+  authorizedEmails: string[] | undefined,
   existingServerCreatedAt?: any,
   isUpdate?: boolean
 ) {
@@ -331,43 +434,44 @@ function serializeFuneralParent(
   return stripUndefined({
     id,
     ownerUid,
+    ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
     code: (record.code || `ศพ-${id}`).slice(0, 40),
-    applicationDate: record.applicationDate || nowIso.slice(0, 10),
+    applicationDate: (record.applicationDate || nowIso.slice(0, 10)).slice(0, 32),
     status: record.status || 'pending',
-    statusNote: record.statusNote,
-    deceasedTitle: record.deceasedTitle || '',
+    statusNote: record.statusNote !== undefined ? String(record.statusNote).slice(0, 1000) : undefined,
+    deceasedTitle: (record.deceasedTitle || '').slice(0, 30),
     deceasedName: (record.deceasedName || 'ไม่ระบุชื่อ').slice(0, 200),
-    deceasedNationalId: record.deceasedNationalId || '',
-    deceasedAge: Number(record.deceasedAge || 0),
-    deceasedDeathDate: record.deceasedDeathDate || '',
-    deceasedDeathTime: record.deceasedDeathTime || '',
-    causeOfDeath: record.causeOfDeath || '',
-    deathPlace: record.deathPlace || '',
-    deceasedAddress: record.deceasedAddress || '',
-    applicantTitle: record.applicantTitle || '',
+    deceasedNationalId: (record.deceasedNationalId || '').slice(0, 30),
+    deceasedAge: safeNum(record.deceasedAge, 0),
+    deceasedDeathDate: (record.deceasedDeathDate || '').slice(0, 32),
+    deceasedDeathTime: (record.deceasedDeathTime || '').slice(0, 16),
+    causeOfDeath: (record.causeOfDeath || '').slice(0, 500),
+    deathPlace: (record.deathPlace || '').slice(0, 300),
+    deceasedAddress: (record.deceasedAddress || '').slice(0, 500),
+    applicantTitle: (record.applicantTitle || '').slice(0, 30),
     applicantName: (record.applicantName || 'ไม่ระบุชื่อ').slice(0, 200),
-    applicantNationalId: record.applicantNationalId || '',
-    applicantPhone: record.applicantPhone || '',
-    applicantRelation: record.applicantRelation || '',
-    applicantAddress: record.applicantAddress || '',
-    applicantPovertyReason: record.applicantPovertyReason || '',
-    templeName: record.templeName || '',
-    cremationDate: record.cremationDate || '',
-    cremationTime: record.cremationTime || '',
-    assistanceAmount: Number(record.assistanceAmount || 0),
+    applicantNationalId: (record.applicantNationalId || '').slice(0, 30),
+    applicantPhone: (record.applicantPhone || '').slice(0, 50),
+    applicantRelation: (record.applicantRelation || '').slice(0, 100),
+    applicantAddress: (record.applicantAddress || '').slice(0, 500),
+    applicantPovertyReason: (record.applicantPovertyReason || '').slice(0, 1000),
+    templeName: (record.templeName || '').slice(0, 300),
+    cremationDate: (record.cremationDate || '').slice(0, 32),
+    cremationTime: (record.cremationTime || '').slice(0, 16),
+    assistanceAmount: safeNum(record.assistanceAmount, 0),
     coffinProvided: Boolean(record.coffinProvided),
     transportProvided: Boolean(record.transportProvided),
     shroudClothProvided: Boolean(record.shroudClothProvided),
-    otherItems: record.otherItems || '',
-    officerId: record.officerId || '',
-    officerName: record.officerName || '',
-    officerPosition: record.officerPosition || '',
-    approverId: record.approverId,
-    approverName: record.approverName || '',
-    approverPosition: record.approverPosition || '',
-    approvalDate: record.approvalDate,
-    createdAt: record.createdAt || nowIso,
-    updatedAt: record.updatedAt || nowIso,
+    otherItems: (record.otherItems || '').slice(0, 500),
+    officerId: (record.officerId || '').slice(0, 128),
+    officerName: (record.officerName || '').slice(0, 200),
+    officerPosition: (record.officerPosition || '').slice(0, 200),
+    approverId: record.approverId !== undefined ? String(record.approverId).slice(0, 128) : undefined,
+    approverName: (record.approverName || '').slice(0, 200),
+    approverPosition: (record.approverPosition || '').slice(0, 200),
+    approvalDate: record.approvalDate !== undefined ? String(record.approvalDate).slice(0, 32) : undefined,
+    createdAt: (record.createdAt || nowIso).slice(0, 64),
+    updatedAt: (record.updatedAt || nowIso).slice(0, 64),
     serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
@@ -376,72 +480,86 @@ function serializeFuneralParent(
 function serializeDonationParent(
   record: DonationDistributionRecord,
   ownerUid: string,
+  authorizedEmails: string[] | undefined,
   existingServerCreatedAt?: any,
   isUpdate?: boolean
 ) {
   const id = sanitizeFirestoreId(record.id, 'donation');
   const nowIso = new Date().toISOString();
 
-  // NOTE: explicitly omits deprecated sandalwoodFlowersCount, photos, documents
+  const safeOtherItems = (record.otherItems || []).slice(0, 30).map((item) => ({
+    id: String(item.id || ''),
+    name: String(item.name || '').slice(0, 200),
+    quantity: safeNum(item.quantity, 0),
+    unit: String(item.unit || '').slice(0, 40),
+  }));
+
   return stripUndefined({
     id,
     ownerUid,
+    ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
     code: (record.code || `บริจาค-${id}`).slice(0, 40),
-    distributionDate: record.distributionDate || nowIso.slice(0, 10),
+    distributionDate: (record.distributionDate || nowIso.slice(0, 10)).slice(0, 32),
     status: record.status || 'completed',
     recipientType: record.recipientType || 'individual',
-    individualTitle: record.individualTitle || '',
-    individualName: record.individualName || '',
-    individualNationalId: record.individualNationalId || '',
-    individualPhone: record.individualPhone || '',
-    individualAddress: record.individualAddress || '',
-    individualCategory: record.individualCategory || '',
-    individualNeedReason: record.individualNeedReason || '',
-    agencyName: record.agencyName || '',
-    agencyType: record.agencyType || '',
-    agencyContactPerson: record.agencyContactPerson || '',
-    agencyContactPosition: record.agencyContactPosition || '',
-    agencyPhone: record.agencyPhone || '',
-    agencyAddress: record.agencyAddress || '',
-    agencyRequestPurpose: record.agencyRequestPurpose || '',
-    officialLetterNo: record.officialLetterNo || '',
-    waterPacks: Number(record.waterPacks || 0),
-    waterUnit: record.waterUnit || 'แพ็ค',
-    dryFoodCount: Number(record.dryFoodCount || 0),
-    dryFoodUnit: record.dryFoodUnit || 'ชุด',
-    riceBags: Number(record.riceBags || 0),
-    riceKg: Number(record.riceKg || 0),
-    diaperPacks: Number(record.diaperPacks || 0),
-    diaperSize: record.diaperSize || '',
-    otherItems: (record.otherItems || []).slice(0, 30),
-    notes: record.notes || '',
-    handoverPlace: record.handoverPlace || '',
-    deliveryMethod: record.deliveryMethod || '',
-    officerId: record.officerId || '',
-    officerName: record.officerName || '',
-    officerPosition: record.officerPosition || '',
-    approverName: record.approverName || '',
-    approverPosition: record.approverPosition || '',
-    createdAt: record.createdAt || nowIso,
-    updatedAt: record.updatedAt || nowIso,
+    individualTitle: (record.individualTitle || '').slice(0, 30),
+    individualName: (record.individualName || '').slice(0, 200),
+    individualNationalId: (record.individualNationalId || '').slice(0, 30),
+    individualPhone: (record.individualPhone || '').slice(0, 50),
+    individualAddress: (record.individualAddress || '').slice(0, 500),
+    individualCategory: (record.individualCategory || '').slice(0, 100),
+    individualNeedReason: (record.individualNeedReason || '').slice(0, 1000),
+    agencyName: (record.agencyName || '').slice(0, 300),
+    agencyType: (record.agencyType || '').slice(0, 120),
+    agencyContactPerson: (record.agencyContactPerson || '').slice(0, 200),
+    agencyContactPosition: (record.agencyContactPosition || '').slice(0, 200),
+    agencyPhone: (record.agencyPhone || '').slice(0, 50),
+    agencyAddress: (record.agencyAddress || '').slice(0, 500),
+    agencyRequestPurpose: (record.agencyRequestPurpose || '').slice(0, 1000),
+    officialLetterNo: (record.officialLetterNo || '').slice(0, 100),
+    waterPacks: safeNum(record.waterPacks, 0),
+    waterUnit: (record.waterUnit || 'แพ็ค').slice(0, 40),
+    dryFoodCount: safeNum(record.dryFoodCount, 0),
+    dryFoodUnit: (record.dryFoodUnit || 'ชุด').slice(0, 40),
+    riceBags: safeNum(record.riceBags, 0),
+    riceKg: safeNum(record.riceKg, 0),
+    diaperPacks: safeNum(record.diaperPacks, 0),
+    diaperSize: (record.diaperSize || '').slice(0, 40),
+    otherItems: safeOtherItems,
+    notes: (record.notes || '').slice(0, 1000),
+    handoverPlace: (record.handoverPlace || '').slice(0, 300),
+    deliveryMethod: (record.deliveryMethod || '').slice(0, 200),
+    officerId: (record.officerId || '').slice(0, 128),
+    officerName: (record.officerName || '').slice(0, 200),
+    officerPosition: (record.officerPosition || '').slice(0, 200),
+    approverName: (record.approverName || '').slice(0, 200),
+    approverPosition: (record.approverPosition || '').slice(0, 200),
+    createdAt: (record.createdAt || nowIso).slice(0, 64),
+    updatedAt: (record.updatedAt || nowIso).slice(0, 64),
     serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
 }
 
 // ============================================================================
-// Write Operations (Parent Doc + Subcollections)
+// Write Operations (Parent Doc + Subcollections with Zero Hydration Race)
 // ============================================================================
 
 async function syncMediaSubcollection(
   collectionPath: 'patients' | 'funerals' | 'donations',
   parentId: string,
   ownerUid: string,
+  user: User,
+  desiredAuthorizedEmails: string[],
   photos: Array<PatientPhoto | DonationPhoto>,
   documents: Array<PatientDocument | FuneralDocument | DonationDocument>
 ) {
+  const superAdmin = isSuperAdminUser(user);
   const mediaCol = collection(db, collectionPath, parentId, 'media');
-  const existingSnap = await getDocs(mediaCol);
+  const mediaQuery = superAdmin
+    ? mediaCol
+    : query(mediaCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
+  const existingSnap = await getDocs(mediaQuery);
   const existingMap = new Map<string, any>();
   existingSnap.forEach((d) => existingMap.set(d.id, d.data()));
 
@@ -451,6 +569,7 @@ async function syncMediaSubcollection(
     const mediaId = sanitizeFirestoreId(p.id, 'photo');
     desiredIds.add(mediaId);
     const existing = existingMap.get(mediaId);
+    const effectiveEmails = existing && !superAdmin ? existing.authorizedEmails : desiredAuthorizedEmails;
     const serialized = await serializeMediaDoc(
       {
         id: mediaId,
@@ -462,6 +581,7 @@ async function syncMediaSubcollection(
       parentId,
       'photo',
       existing?.ownerUid || ownerUid,
+      effectiveEmails,
       existing?.serverCreatedAt,
       Boolean(existing)
     );
@@ -474,6 +594,7 @@ async function syncMediaSubcollection(
     const mediaId = sanitizeFirestoreId(d.id, 'doc');
     desiredIds.add(mediaId);
     const existing = existingMap.get(mediaId);
+    const effectiveEmails = existing && !superAdmin ? existing.authorizedEmails : desiredAuthorizedEmails;
     const serialized = await serializeMediaDoc(
       {
         id: mediaId,
@@ -488,6 +609,7 @@ async function syncMediaSubcollection(
       parentId,
       'document',
       existing?.ownerUid || ownerUid,
+      effectiveEmails,
       existing?.serverCreatedAt,
       Boolean(existing)
     );
@@ -504,14 +626,21 @@ async function syncMediaSubcollection(
   }
 }
 
-export async function savePatientToCloud(patient: PatientRecord, user: User): Promise<void> {
+export async function savePatientToCloud(
+  patient: PatientRecord,
+  user: User,
+  teamEmails: string[] = []
+): Promise<void> {
   const patientId = sanitizeFirestoreId(patient.id, 'pt');
   const patientRef = doc(db, 'patients', patientId);
+  const superAdmin = isSuperAdminUser(user);
+  const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
 
   try {
     const existingSnap = await getDoc(patientRef);
     const existingData = existingSnap.exists() ? existingSnap.data() : null;
     const ownerUid = existingData?.ownerUid || user.uid;
+    const parentEmails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
 
     const parentPayload = serializePatientParent(
       {
@@ -520,25 +649,34 @@ export async function savePatientToCloud(patient: PatientRecord, user: User): Pr
         createdAt: existingData?.createdAt || patient.createdAt,
       },
       ownerUid,
+      parentEmails,
       existingData?.serverCreatedAt,
       Boolean(existingData)
     );
 
-    await setDoc(patientRef, parentPayload);
+    // If parent does not exist yet, create parent first so subcollection security rules (exists(parent)) pass
+    if (!existingData) {
+      await setDoc(patientRef, parentPayload);
+    }
 
     // Sync deliveries subcollection
     const delCol = collection(db, 'patients', patientId, 'deliveries');
-    const existingDelSnap = await getDocs(delCol);
+    const delQuery = superAdmin
+      ? delCol
+      : query(delCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
+    const existingDelSnap = await getDocs(delQuery);
     const existingDelMap = new Map<string, any>();
     existingDelSnap.forEach((d) => existingDelMap.set(d.id, d.data()));
 
     for (const del of patient.deliveries || []) {
       const delId = sanitizeFirestoreId(del.id, 'del');
       const prevDel = existingDelMap.get(delId);
+      const delEmails = prevDel && !superAdmin ? prevDel.authorizedEmails : desiredEmails;
       const delPayload = await serializeDeliveryDoc(
         { ...del, id: delId },
         patientId,
         prevDel?.ownerUid || user.uid,
+        delEmails,
         prevDel?.serverCreatedAt,
         Boolean(prevDel)
       );
@@ -550,9 +688,18 @@ export async function savePatientToCloud(patient: PatientRecord, user: User): Pr
       'patients',
       patientId,
       user.uid,
+      user,
+      desiredEmails,
       patient.photos || [],
       patient.documents || []
     );
+
+    // Commit/touch parent AFTER subcollections so remote onSnapshot listeners hydrate complete data
+    if (existingData) {
+      await setDoc(patientRef, parentPayload);
+    } else if ((patient.deliveries?.length || 0) > 0 || (patient.photos?.length || 0) > 0 || (patient.documents?.length || 0) > 0) {
+      await updateDoc(patientRef, { serverUpdatedAt: serverTimestamp() });
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `patients/${patientId}`);
     throw err;
@@ -562,39 +709,50 @@ export async function savePatientToCloud(patient: PatientRecord, user: User): Pr
 export async function saveDeliveryToCloud(
   patient: PatientRecord,
   delivery: MonthlyDelivery,
-  user: User
+  user: User,
+  teamEmails: string[] = []
 ): Promise<void> {
   const patientId = sanitizeFirestoreId(patient.id, 'pt');
   const delId = sanitizeFirestoreId(delivery.id, 'del');
+  const superAdmin = isSuperAdminUser(user);
+  const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
+
   try {
     const patientRef = doc(db, 'patients', patientId);
     const pSnap = await getDoc(patientRef);
     if (!pSnap.exists()) {
-      await savePatientToCloud(patient, user);
+      await savePatientToCloud(patient, user, teamEmails);
       return;
     }
     const existingData = pSnap.data();
+
+    // Write subcollection delivery FIRST so remote onSnapshot fires after delivery doc exists
+    const delRef = doc(db, 'patients', patientId, 'deliveries', delId);
+    const delSnap = await getDoc(delRef);
+    const delData = delSnap.exists() ? delSnap.data() : null;
+    const delEmails = delData && !superAdmin ? delData.authorizedEmails : desiredEmails;
+    const payload = await serializeDeliveryDoc(
+      { ...delivery, id: delId },
+      patientId,
+      delData?.ownerUid || user.uid,
+      delEmails,
+      delData?.serverCreatedAt,
+      Boolean(delData)
+    );
+    await setDoc(delRef, payload);
+
+    // Then update parent doc to trigger remote hydration with the committed delivery
+    const parentEmails = !superAdmin ? existingData.authorizedEmails : desiredEmails;
     await setDoc(
       patientRef,
       serializePatientParent(
         { ...patient, id: patientId, createdAt: existingData.createdAt },
         existingData.ownerUid,
+        parentEmails,
         existingData.serverCreatedAt,
         true
       )
     );
-
-    const delRef = doc(db, 'patients', patientId, 'deliveries', delId);
-    const delSnap = await getDoc(delRef);
-    const delData = delSnap.exists() ? delSnap.data() : null;
-    const payload = await serializeDeliveryDoc(
-      { ...delivery, id: delId },
-      patientId,
-      delData?.ownerUid || user.uid,
-      delData?.serverCreatedAt,
-      Boolean(delData)
-    );
-    await setDoc(delRef, payload);
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `patients/${patientId}/deliveries/${delId}`);
     throw err;
@@ -603,40 +761,66 @@ export async function saveDeliveryToCloud(
 
 export async function saveFuneralToCloud(
   record: FuneralAssistanceRecord,
-  user: User
+  user: User,
+  teamEmails: string[] = []
 ): Promise<void> {
   const funeralId = sanitizeFirestoreId(record.id, 'funeral');
   const ref = doc(db, 'funerals', funeralId);
+  const superAdmin = isSuperAdminUser(user);
+  const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
+
   try {
     const snap = await getDoc(ref);
     const existingData = snap.exists() ? snap.data() : null;
     const ownerUid = existingData?.ownerUid || user.uid;
+    const parentEmails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
 
-    await setDoc(
-      ref,
-      serializeFuneralParent(
-        {
-          ...record,
-          id: funeralId,
-          createdAt: existingData?.createdAt || record.createdAt,
-        },
-        ownerUid,
-        existingData?.serverCreatedAt,
-        Boolean(existingData)
-      )
+    const parentPayload = serializeFuneralParent(
+      {
+        ...record,
+        id: funeralId,
+        createdAt: existingData?.createdAt || record.createdAt,
+      },
+      ownerUid,
+      parentEmails,
+      existingData?.serverCreatedAt,
+      Boolean(existingData)
     );
 
-    await syncMediaSubcollection('funerals', funeralId, user.uid, [], record.documents || []);
+    if (!existingData) {
+      await setDoc(ref, parentPayload);
+    }
+
+    await syncMediaSubcollection(
+      'funerals',
+      funeralId,
+      user.uid,
+      user,
+      desiredEmails,
+      [],
+      record.documents || []
+    );
+
+    if (existingData) {
+      await setDoc(ref, parentPayload);
+    } else if ((record.documents?.length || 0) > 0) {
+      await updateDoc(ref, { serverUpdatedAt: serverTimestamp() });
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `funerals/${funeralId}`);
     throw err;
   }
 }
 
-export async function deleteFuneralFromCloud(id: string): Promise<void> {
+export async function deleteFuneralFromCloud(id: string, user?: User | null): Promise<void> {
   const funeralId = sanitizeFirestoreId(id, 'funeral');
   try {
-    const mediaSnap = await getDocs(collection(db, 'funerals', funeralId, 'media'));
+    const mediaCol = collection(db, 'funerals', funeralId, 'media');
+    const mediaQuery =
+      !user || isSuperAdminUser(user)
+        ? mediaCol
+        : query(mediaCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
+    const mediaSnap = await getDocs(mediaQuery);
     for (const d of mediaSnap.docs) {
       await deleteDoc(doc(db, 'funerals', funeralId, 'media', d.id));
     }
@@ -649,46 +833,66 @@ export async function deleteFuneralFromCloud(id: string): Promise<void> {
 
 export async function saveDonationToCloud(
   record: DonationDistributionRecord,
-  user: User
+  user: User,
+  teamEmails: string[] = []
 ): Promise<void> {
   const donationId = sanitizeFirestoreId(record.id, 'donation');
   const ref = doc(db, 'donations', donationId);
+  const superAdmin = isSuperAdminUser(user);
+  const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
+
   try {
     const snap = await getDoc(ref);
     const existingData = snap.exists() ? snap.data() : null;
     const ownerUid = existingData?.ownerUid || user.uid;
+    const parentEmails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
 
-    await setDoc(
-      ref,
-      serializeDonationParent(
-        {
-          ...record,
-          id: donationId,
-          createdAt: existingData?.createdAt || record.createdAt,
-        },
-        ownerUid,
-        existingData?.serverCreatedAt,
-        Boolean(existingData)
-      )
+    const parentPayload = serializeDonationParent(
+      {
+        ...record,
+        id: donationId,
+        createdAt: existingData?.createdAt || record.createdAt,
+      },
+      ownerUid,
+      parentEmails,
+      existingData?.serverCreatedAt,
+      Boolean(existingData)
     );
+
+    if (!existingData) {
+      await setDoc(ref, parentPayload);
+    }
 
     await syncMediaSubcollection(
       'donations',
       donationId,
       user.uid,
+      user,
+      desiredEmails,
       record.photos || [],
       record.documents || []
     );
+
+    if (existingData) {
+      await setDoc(ref, parentPayload);
+    } else if ((record.photos?.length || 0) > 0 || (record.documents?.length || 0) > 0) {
+      await updateDoc(ref, { serverUpdatedAt: serverTimestamp() });
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `donations/${donationId}`);
     throw err;
   }
 }
 
-export async function deleteDonationFromCloud(id: string): Promise<void> {
+export async function deleteDonationFromCloud(id: string, user?: User | null): Promise<void> {
   const donationId = sanitizeFirestoreId(id, 'donation');
   try {
-    const mediaSnap = await getDocs(collection(db, 'donations', donationId, 'media'));
+    const mediaCol = collection(db, 'donations', donationId, 'media');
+    const mediaQuery =
+      !user || isSuperAdminUser(user)
+        ? mediaCol
+        : query(mediaCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
+    const mediaSnap = await getDocs(mediaQuery);
     for (const d of mediaSnap.docs) {
       await deleteDoc(doc(db, 'donations', donationId, 'media', d.id));
     }
@@ -700,85 +904,250 @@ export async function deleteDonationFromCloud(id: string): Promise<void> {
 }
 
 // ============================================================================
+// Shared Settings Sync (/settings/delivery_plan & /settings/workspace)
+// ============================================================================
+
+export async function saveDeliveryPlanSettingsToCloud(
+  settings: DeliveryPlanSettings,
+  user: User,
+  teamEmails: string[] = []
+): Promise<void> {
+  const ref = doc(db, 'settings', 'delivery_plan');
+  const superAdmin = isSuperAdminUser(user);
+  const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
+
+  try {
+    const snap = await getDoc(ref);
+    const existingData = snap.exists() ? snap.data() : null;
+    const ownerUid = existingData?.ownerUid || user.uid;
+    const emails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
+
+    const payload = stripUndefined({
+      id: 'delivery_plan',
+      ownerUid,
+      ...(emails !== undefined ? { authorizedEmails: emails } : {}),
+      ricePricePerBag: safeNum(settings.ricePricePerBag, 0),
+      customRiceCount:
+        settings.customRiceCount === null || settings.customRiceCount === undefined
+          ? null
+          : safeNum(settings.customRiceCount, 0),
+      currentMonth: (settings.currentMonth || '').slice(0, 100),
+      updatedAt: (settings.updatedAt || new Date().toISOString()).slice(0, 64),
+      serverCreatedAt: existingData ? existingData.serverCreatedAt : serverTimestamp(),
+      serverUpdatedAt: serverTimestamp(),
+    });
+
+    await setDoc(ref, payload);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, 'settings/delivery_plan');
+    throw err;
+  }
+}
+
+export async function fetchWorkspaceAuthorizedEmails(user: User): Promise<string[]> {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'workspace'));
+    if (snap.exists()) {
+      const data = snap.data();
+      if (Array.isArray(data.authorizedEmails)) {
+        const clean = normalizeAuthorizedEmails(data.authorizedEmails);
+        saveStoredAuthorizedEmails(clean);
+        return clean;
+      }
+    }
+  } catch {
+    // Non-authorized or non-existent workspace config falls back gracefully
+  }
+  return normalizeAuthorizedEmails([], isSuperAdminUser(user) ? user : null);
+}
+
+/**
+ * Super Admin: Update authorized staff email allowlist and propagate to all existing Cloud docs
+ * so authorized staff devices immediately see and edit identical data.
+ */
+export async function saveWorkspaceAuthorizedEmails(
+  emails: string[],
+  user: User
+): Promise<string[]> {
+  if (!isSuperAdminUser(user)) {
+    throw new Error('เฉพาะ Super Admin เท่านั้นที่สามารถจัดการสิทธิ์บัญชีร่วมกันได้');
+  }
+  const normalized = normalizeAuthorizedEmails(emails, user);
+  const ref = doc(db, 'settings', 'workspace');
+  try {
+    const snap = await getDoc(ref);
+    const existingData = snap.exists() ? snap.data() : null;
+    await setDoc(ref, {
+      id: 'workspace',
+      authorizedEmails: normalized,
+      updatedAt: new Date().toISOString(),
+      updatedBy: (user.email || '').slice(0, 200),
+      serverCreatedAt: existingData?.serverCreatedAt || serverTimestamp(),
+      serverUpdatedAt: serverTimestamp(),
+    });
+    saveStoredAuthorizedEmails(normalized);
+
+    // Propagate updated authorizedEmails to delivery_plan and existing records + subcollections
+    const dpRef = doc(db, 'settings', 'delivery_plan');
+    const dpSnap = await getDoc(dpRef);
+    if (dpSnap.exists()) {
+      await updateDoc(dpRef, {
+        authorizedEmails: normalized,
+        serverUpdatedAt: serverTimestamp(),
+      });
+    }
+
+    const [pSnap, fSnap, dSnap] = await Promise.all([
+      getDocs(collection(db, 'patients')),
+      getDocs(collection(db, 'funerals')),
+      getDocs(collection(db, 'donations')),
+    ]);
+
+    for (const pDoc of pSnap.docs) {
+      await updateDoc(pDoc.ref, {
+        authorizedEmails: normalized,
+        serverUpdatedAt: serverTimestamp(),
+      });
+      const [delSnap, mediaSnap] = await Promise.all([
+        getDocs(collection(db, 'patients', pDoc.id, 'deliveries')),
+        getDocs(collection(db, 'patients', pDoc.id, 'media')),
+      ]);
+      for (const d of delSnap.docs) {
+        await updateDoc(d.ref, { authorizedEmails: normalized, serverUpdatedAt: serverTimestamp() });
+      }
+      for (const m of mediaSnap.docs) {
+        await updateDoc(m.ref, { authorizedEmails: normalized, serverUpdatedAt: serverTimestamp() });
+      }
+    }
+
+    for (const fDoc of fSnap.docs) {
+      await updateDoc(fDoc.ref, {
+        authorizedEmails: normalized,
+        serverUpdatedAt: serverTimestamp(),
+      });
+      const mediaSnap = await getDocs(collection(db, 'funerals', fDoc.id, 'media'));
+      for (const m of mediaSnap.docs) {
+        await updateDoc(m.ref, { authorizedEmails: normalized, serverUpdatedAt: serverTimestamp() });
+      }
+    }
+
+    for (const dDoc of dSnap.docs) {
+      await updateDoc(dDoc.ref, {
+        authorizedEmails: normalized,
+        serverUpdatedAt: serverTimestamp(),
+      });
+      const mediaSnap = await getDocs(collection(db, 'donations', dDoc.id, 'media'));
+      for (const m of mediaSnap.docs) {
+        await updateDoc(m.ref, { authorizedEmails: normalized, serverUpdatedAt: serverTimestamp() });
+      }
+    }
+
+    return normalized;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, 'settings/workspace');
+    throw err;
+  }
+}
+
+// ============================================================================
 // Read & Hydration Helpers
 // ============================================================================
 
-async function hydratePatient(raw: Record<string, any>, user: User): Promise<PatientRecord> {
+async function hydratePatient(
+  raw: Record<string, any>,
+  user: User,
+  fallbackLocal?: PatientRecord
+): Promise<PatientRecord> {
   const patientId = raw.id;
   const superAdmin = isSuperAdminUser(user);
+  const userEmail = (user.email || '').toLowerCase();
 
   const delQuery = superAdmin
     ? collection(db, 'patients', patientId, 'deliveries')
     : query(
         collection(db, 'patients', patientId, 'deliveries'),
-        where('ownerUid', '==', user.uid)
+        where('authorizedEmails', 'array-contains', userEmail)
       );
 
   const mediaQuery = superAdmin
     ? collection(db, 'patients', patientId, 'media')
     : query(
         collection(db, 'patients', patientId, 'media'),
-        where('ownerUid', '==', user.uid)
+        where('authorizedEmails', 'array-contains', userEmail)
       );
 
   const [delSnap, mediaSnap] = await Promise.all([
-    getDocs(delQuery).catch(() => null),
-    getDocs(mediaQuery).catch(() => null),
+    getDocs(delQuery).catch((err) => {
+      console.warn(`Failed loading deliveries for patient ${patientId}:`, err);
+      return null;
+    }),
+    getDocs(mediaQuery).catch((err) => {
+      console.warn(`Failed loading media for patient ${patientId}:`, err);
+      return null;
+    }),
   ]);
 
-  const deliveries: MonthlyDelivery[] = [];
-  delSnap?.forEach((d) => {
-    const val = d.data();
-    deliveries.push({
-      id: val.id || d.id,
-      deliveryDate: val.deliveryDate || '',
-      monthYearLabel: val.monthYearLabel || '',
-      cashAmount: Number(val.cashAmount || 0),
-      cashGiven: Boolean(val.cashGiven),
-      diaperSize: val.diaperSize || 'NONE',
-      diaperPacks: Number(val.diaperPacks || 0),
-      ricePacks: Number(val.ricePacks || 0),
-      waterPacks: Number(val.waterPacks || 0),
-      waterSize: val.waterSize || '1.5L',
-      otherItems: val.otherItems || '',
-      receivedBy: val.receivedBy || '',
-      recipientRelation: val.recipientRelation || '',
-      officerName: val.officerName || '',
-      photoUrl: val.photoUrl,
-      notes: val.notes,
+  let deliveries: MonthlyDelivery[] = [];
+  if (delSnap) {
+    delSnap.forEach((d) => {
+      const val = d.data();
+      deliveries.push({
+        id: val.id || d.id,
+        deliveryDate: val.deliveryDate || '',
+        monthYearLabel: val.monthYearLabel || '',
+        cashAmount: safeNum(val.cashAmount, 0),
+        cashGiven: Boolean(val.cashGiven),
+        diaperSize: val.diaperSize || 'NONE',
+        diaperPacks: safeNum(val.diaperPacks, 0),
+        ricePacks: safeNum(val.ricePacks, 0),
+        waterPacks: safeNum(val.waterPacks, 0),
+        waterSize: val.waterSize || '1.5L',
+        otherItems: val.otherItems || '',
+        receivedBy: val.receivedBy || '',
+        recipientRelation: val.recipientRelation || '',
+        officerName: val.officerName || '',
+        photoUrl: val.photoUrl,
+        notes: val.notes,
+      });
     });
-  });
+    deliveries.sort((a, b) => (b.deliveryDate || '').localeCompare(a.deliveryDate || ''));
+  } else if (fallbackLocal?.deliveries) {
+    deliveries = fallbackLocal.deliveries;
+  }
 
-  deliveries.sort((a, b) => (b.deliveryDate || '').localeCompare(a.deliveryDate || ''));
+  let photos: PatientPhoto[] = [];
+  let documents: PatientDocument[] = [];
 
-  const photos: PatientPhoto[] = [];
-  const documents: PatientDocument[] = [];
+  if (mediaSnap) {
+    mediaSnap.forEach((d) => {
+      const val = d.data();
+      if (val.kind === 'photo') {
+        photos.push({
+          id: val.id || d.id,
+          category: val.category || 'patient',
+          dataUrl: val.dataUrl,
+          caption: val.caption || '',
+          timestamp: val.timestamp || '',
+        });
+      } else {
+        documents.push({
+          id: val.id || d.id,
+          category: val.category || 'other',
+          title: val.title || val.fileName || 'เอกสารแนบ',
+          fileName: val.fileName || 'document',
+          fileType: val.fileType || 'application/octet-stream',
+          dataUrl: val.dataUrl,
+          fileSize: safeNum(val.fileSize, 0),
+          uploadDate: val.uploadDate || '',
+        });
+      }
+    });
+  } else if (fallbackLocal) {
+    photos = fallbackLocal.photos || [];
+    documents = fallbackLocal.documents || [];
+  }
 
-  mediaSnap?.forEach((d) => {
-    const val = d.data();
-    if (val.kind === 'photo') {
-      photos.push({
-        id: val.id || d.id,
-        category: val.category || 'patient',
-        dataUrl: val.dataUrl,
-        caption: val.caption || '',
-        timestamp: val.timestamp || '',
-      });
-    } else {
-      documents.push({
-        id: val.id || d.id,
-        category: val.category || 'other',
-        title: val.title || val.fileName || 'เอกสารแนบ',
-        fileName: val.fileName || 'document',
-        fileType: val.fileType || 'application/octet-stream',
-        dataUrl: val.dataUrl,
-        fileSize: Number(val.fileSize || 0),
-        uploadDate: val.uploadDate || '',
-      });
-    }
-  });
-
-  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, ...rest } = raw;
+  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
   return {
     ...(rest as PatientRecord),
     deliveries,
@@ -787,75 +1156,102 @@ async function hydratePatient(raw: Record<string, any>, user: User): Promise<Pat
   };
 }
 
-async function hydrateFuneral(raw: Record<string, any>, user: User): Promise<FuneralAssistanceRecord> {
+async function hydrateFuneral(
+  raw: Record<string, any>,
+  user: User,
+  fallbackLocal?: FuneralAssistanceRecord
+): Promise<FuneralAssistanceRecord> {
   const funeralId = raw.id;
   const superAdmin = isSuperAdminUser(user);
+  const userEmail = (user.email || '').toLowerCase();
   const mediaQuery = superAdmin
     ? collection(db, 'funerals', funeralId, 'media')
     : query(
         collection(db, 'funerals', funeralId, 'media'),
-        where('ownerUid', '==', user.uid)
+        where('authorizedEmails', 'array-contains', userEmail)
       );
 
-  const mediaSnap = await getDocs(mediaQuery).catch(() => null);
-  const documents: FuneralDocument[] = [];
-  mediaSnap?.forEach((d) => {
-    const val = d.data();
-    documents.push({
-      id: val.id || d.id,
-      category: val.category || 'other',
-      title: val.title || val.fileName || 'เอกสารแนบ',
-      fileName: val.fileName || 'document',
-      fileType: val.fileType || 'application/octet-stream',
-      dataUrl: val.dataUrl,
-      fileSize: Number(val.fileSize || 0),
-      uploadDate: val.uploadDate || '',
-    });
+  const mediaSnap = await getDocs(mediaQuery).catch((err) => {
+    console.warn(`Failed loading media for funeral ${funeralId}:`, err);
+    return null;
   });
 
-  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, ...rest } = raw;
+  let documents: FuneralDocument[] = [];
+  if (mediaSnap) {
+    mediaSnap.forEach((d) => {
+      const val = d.data();
+      documents.push({
+        id: val.id || d.id,
+        category: val.category || 'other',
+        title: val.title || val.fileName || 'เอกสารแนบ',
+        fileName: val.fileName || 'document',
+        fileType: val.fileType || 'application/octet-stream',
+        dataUrl: val.dataUrl,
+        fileSize: safeNum(val.fileSize, 0),
+        uploadDate: val.uploadDate || '',
+      });
+    });
+  } else if (fallbackLocal?.documents) {
+    documents = fallbackLocal.documents;
+  }
+
+  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
   return {
     ...(rest as FuneralAssistanceRecord),
     documents,
   };
 }
 
-async function hydrateDonation(raw: Record<string, any>, user: User): Promise<DonationDistributionRecord> {
+async function hydrateDonation(
+  raw: Record<string, any>,
+  user: User,
+  fallbackLocal?: DonationDistributionRecord
+): Promise<DonationDistributionRecord> {
   const donationId = raw.id;
   const superAdmin = isSuperAdminUser(user);
+  const userEmail = (user.email || '').toLowerCase();
   const mediaQuery = superAdmin
     ? collection(db, 'donations', donationId, 'media')
     : query(
         collection(db, 'donations', donationId, 'media'),
-        where('ownerUid', '==', user.uid)
+        where('authorizedEmails', 'array-contains', userEmail)
       );
 
-  const mediaSnap = await getDocs(mediaQuery).catch(() => null);
-  const photos: DonationPhoto[] = [];
-  const documents: DonationDocument[] = [];
-  mediaSnap?.forEach((d) => {
-    const val = d.data();
-    if (val.kind === 'photo') {
-      photos.push({
-        id: val.id || d.id,
-        dataUrl: val.dataUrl,
-        caption: val.caption || '',
-        timestamp: val.timestamp || '',
-      });
-    } else {
-      documents.push({
-        id: val.id || d.id,
-        title: val.title || val.fileName || 'เอกสารแนบ',
-        fileName: val.fileName || 'document',
-        fileType: val.fileType || 'application/octet-stream',
-        dataUrl: val.dataUrl,
-        fileSize: Number(val.fileSize || 0),
-        uploadDate: val.uploadDate || '',
-      });
-    }
+  const mediaSnap = await getDocs(mediaQuery).catch((err) => {
+    console.warn(`Failed loading media for donation ${donationId}:`, err);
+    return null;
   });
 
-  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, ...rest } = raw;
+  let photos: DonationPhoto[] = [];
+  let documents: DonationDocument[] = [];
+  if (mediaSnap) {
+    mediaSnap.forEach((d) => {
+      const val = d.data();
+      if (val.kind === 'photo') {
+        photos.push({
+          id: val.id || d.id,
+          dataUrl: val.dataUrl,
+          caption: val.caption || '',
+          timestamp: val.timestamp || '',
+        });
+      } else {
+        documents.push({
+          id: val.id || d.id,
+          title: val.title || val.fileName || 'เอกสารแนบ',
+          fileName: val.fileName || 'document',
+          fileType: val.fileType || 'application/octet-stream',
+          dataUrl: val.dataUrl,
+          fileSize: safeNum(val.fileSize, 0),
+          uploadDate: val.uploadDate || '',
+        });
+      }
+    });
+  } else if (fallbackLocal) {
+    photos = fallbackLocal.photos || [];
+    documents = fallbackLocal.documents || [];
+  }
+
+  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
   return {
     ...(rest as DonationDistributionRecord),
     photos,
@@ -863,48 +1259,66 @@ async function hydrateDonation(raw: Record<string, any>, user: User): Promise<Do
   };
 }
 
+export interface CloudErrorDetail {
+  isPermissionError: boolean;
+  message: string;
+}
+
 /**
- * Subscribe to real-time updates on patients, funerals, and donations.
+ * Subscribe to real-time updates on patients, funerals, donations, delivery settings, and workspace config.
  */
 export function subscribeToCloudCollections(
   user: User,
   handlers: {
-    onPatients: (items: PatientRecord[]) => void;
-    onFunerals: (items: FuneralAssistanceRecord[]) => void;
-    onDonations: (items: DonationDistributionRecord[]) => void;
-    onError?: (err: unknown) => void;
+    getLocalPatients?: () => PatientRecord[];
+    getLocalFunerals?: () => FuneralAssistanceRecord[];
+    getLocalDonations?: () => DonationDistributionRecord[];
+    onPatients: (items: PatientRecord[], fromCache: boolean) => void;
+    onFunerals: (items: FuneralAssistanceRecord[], fromCache: boolean) => void;
+    onDonations: (items: DonationDistributionRecord[], fromCache: boolean) => void;
+    onDeliverySettings?: (settings: DeliveryPlanSettings, fromCache: boolean) => void;
+    onAuthorizedEmails?: (emails: string[]) => void;
+    onError?: (err: CloudErrorDetail) => void;
   }
 ): () => void {
   const superAdmin = isSuperAdminUser(user);
+  const userEmail = (user.email || '').toLowerCase();
 
   const patientsQuery = superAdmin
     ? collection(db, 'patients')
-    : query(collection(db, 'patients'), where('ownerUid', '==', user.uid));
+    : query(collection(db, 'patients'), where('authorizedEmails', 'array-contains', userEmail));
   const funeralsQuery = superAdmin
     ? collection(db, 'funerals')
-    : query(collection(db, 'funerals'), where('ownerUid', '==', user.uid));
+    : query(collection(db, 'funerals'), where('authorizedEmails', 'array-contains', userEmail));
   const donationsQuery = superAdmin
     ? collection(db, 'donations')
-    : query(collection(db, 'donations'), where('ownerUid', '==', user.uid));
+    : query(collection(db, 'donations'), where('authorizedEmails', 'array-contains', userEmail));
 
   const unsubs: Unsubscribe[] = [];
+
+  const emitError = (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    const isPerm = msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient');
+    handlers.onError?.({ isPermissionError: isPerm, message: msg });
+  };
 
   unsubs.push(
     onSnapshot(
       patientsQuery,
       async (snap) => {
         try {
+          const localMap = new Map((handlers.getLocalPatients?.() || []).map((p) => [p.id, p]));
           const items = await Promise.all(
-            snap.docs.map((d) => hydratePatient({ id: d.id, ...d.data() }, user))
+            snap.docs.map((d) => hydratePatient({ id: d.id, ...d.data() }, user, localMap.get(d.id)))
           );
-          handlers.onPatients(items);
+          handlers.onPatients(items, snap.metadata.fromCache);
         } catch (err) {
-          handlers.onError?.(err);
+          emitError(err);
         }
       },
       (err) => {
         handleFirestoreError(err, OperationType.LIST, 'patients');
-        handlers.onError?.(err);
+        emitError(err);
       }
     )
   );
@@ -914,17 +1328,18 @@ export function subscribeToCloudCollections(
       funeralsQuery,
       async (snap) => {
         try {
+          const localMap = new Map((handlers.getLocalFunerals?.() || []).map((f) => [f.id, f]));
           const items = await Promise.all(
-            snap.docs.map((d) => hydrateFuneral({ id: d.id, ...d.data() }, user))
+            snap.docs.map((d) => hydrateFuneral({ id: d.id, ...d.data() }, user, localMap.get(d.id)))
           );
-          handlers.onFunerals(items);
+          handlers.onFunerals(items, snap.metadata.fromCache);
         } catch (err) {
-          handlers.onError?.(err);
+          emitError(err);
         }
       },
       (err) => {
         handleFirestoreError(err, OperationType.LIST, 'funerals');
-        handlers.onError?.(err);
+        emitError(err);
       }
     )
   );
@@ -934,20 +1349,77 @@ export function subscribeToCloudCollections(
       donationsQuery,
       async (snap) => {
         try {
+          const localMap = new Map((handlers.getLocalDonations?.() || []).map((d) => [d.id, d]));
           const items = await Promise.all(
-            snap.docs.map((d) => hydrateDonation({ id: d.id, ...d.data() }, user))
+            snap.docs.map((d) => hydrateDonation({ id: d.id, ...d.data() }, user, localMap.get(d.id)))
           );
-          handlers.onDonations(items);
+          handlers.onDonations(items, snap.metadata.fromCache);
         } catch (err) {
-          handlers.onError?.(err);
+          emitError(err);
         }
       },
       (err) => {
         handleFirestoreError(err, OperationType.LIST, 'donations');
-        handlers.onError?.(err);
+        emitError(err);
       }
     )
   );
+
+  if (handlers.onDeliverySettings) {
+    unsubs.push(
+      onSnapshot(
+        doc(db, 'settings', 'delivery_plan'),
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data();
+          const price = Number(data.ricePricePerBag);
+          const customRice =
+            data.customRiceCount === null || data.customRiceCount === undefined
+              ? null
+              : Number(data.customRiceCount);
+          handlers.onDeliverySettings?.(
+            {
+              ricePricePerBag: Number.isFinite(price) && price >= 0 ? price : 0,
+              customRiceCount:
+                customRice !== null && Number.isFinite(customRice) && customRice >= 0
+                  ? customRice
+                  : null,
+              currentMonth: typeof data.currentMonth === 'string' ? data.currentMonth : '',
+              updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : '',
+            },
+            snap.metadata.fromCache
+          );
+        },
+        (err) => {
+          // Missing delivery_plan doc on initial boot is expected; permission errors report cleanly
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.toLowerCase().includes('permission')) {
+            console.warn('Delivery settings snapshot warning:', msg);
+          }
+        }
+      )
+    );
+  }
+
+  if (handlers.onAuthorizedEmails) {
+    unsubs.push(
+      onSnapshot(
+        doc(db, 'settings', 'workspace'),
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data();
+          if (Array.isArray(data.authorizedEmails)) {
+            const clean = normalizeAuthorizedEmails(data.authorizedEmails);
+            saveStoredAuthorizedEmails(clean);
+            handlers.onAuthorizedEmails?.(clean);
+          }
+        },
+        () => {
+          /* ignore if user isn't authorized for workspace settings */
+        }
+      )
+    );
+  }
 
   return () => {
     unsubs.forEach((u) => u());
@@ -955,33 +1427,62 @@ export function subscribeToCloudCollections(
 }
 
 /**
- * Push any local records that don't exist in Firestore (or have newer updatedAt timestamps)
- * up to Cloud Firestore cleanly, ensuring zero data loss upon migration or edits.
+ * Flush pending offline deletes & push unsynced local records cleanly up to Cloud Firestore.
+ * Never resurrects records that were already synced and deleted on another device.
  */
 export async function syncLocalRecordsToCloud(
   user: User,
   localPatients: PatientRecord[],
   localFunerals: FuneralAssistanceRecord[],
-  localDonations: DonationDistributionRecord[]
-): Promise<{ uploaded: number }> {
+  localDonations: DonationDistributionRecord[],
+  localDeliverySettings?: DeliveryPlanSettings,
+  teamEmails: string[] = []
+): Promise<{ uploaded: number; deleted: number }> {
   let uploaded = 0;
+  let deleted = 0;
   const superAdmin = isSuperAdminUser(user);
+  const userEmail = (user.email || '').toLowerCase();
+  const pendingOps = getPendingOps();
+  const knownSynced = getKnownSyncedIds();
 
+  // 1. Flush pending deletes first so deleted records don't get re-uploaded
+  for (const id of pendingOps.deletes.funerals) {
+    try {
+      await deleteFuneralFromCloud(id, user);
+      clearPendingDelete('funerals', id);
+      removeKnownSyncedId('funerals', id);
+      deleted++;
+    } catch (err) {
+      console.warn(`Pending funeral delete ${id} failed:`, err);
+    }
+  }
+  for (const id of pendingOps.deletes.donations) {
+    try {
+      await deleteDonationFromCloud(id, user);
+      clearPendingDelete('donations', id);
+      removeKnownSyncedId('donations', id);
+      deleted++;
+    } catch (err) {
+      console.warn(`Pending donation delete ${id} failed:`, err);
+    }
+  }
+
+  // 2. Fetch existing Cloud timestamps
   const [pSnap, fSnap, dSnap] = await Promise.all([
     getDocs(
       superAdmin
         ? collection(db, 'patients')
-        : query(collection(db, 'patients'), where('ownerUid', '==', user.uid))
+        : query(collection(db, 'patients'), where('authorizedEmails', 'array-contains', userEmail))
     ),
     getDocs(
       superAdmin
         ? collection(db, 'funerals')
-        : query(collection(db, 'funerals'), where('ownerUid', '==', user.uid))
+        : query(collection(db, 'funerals'), where('authorizedEmails', 'array-contains', userEmail))
     ),
     getDocs(
       superAdmin
         ? collection(db, 'donations')
-        : query(collection(db, 'donations'), where('ownerUid', '==', user.uid))
+        : query(collection(db, 'donations'), where('authorizedEmails', 'array-contains', userEmail))
     ),
   ]);
 
@@ -991,13 +1492,32 @@ export async function syncLocalRecordsToCloud(
     cloudPatientTimes.set(d.id, Date.parse(data.updatedAt || data.createdAt || '') || 0);
   });
 
+  const uploadedPatientIds: string[] = [];
+  const pendingPatientSet = new Set(pendingOps.upserts.patients);
+  const knownPatientSet = new Set(knownSynced.patients);
   for (const pt of localPatients) {
     const safeId = sanitizeFirestoreId(pt.id, 'pt');
     const localTime = Date.parse(pt.updatedAt || pt.createdAt || '') || Date.now();
     const cloudTime = cloudPatientTimes.get(safeId);
-    if (cloudTime === undefined || localTime > cloudTime) {
-      await savePatientToCloud(pt, user);
-      uploaded++;
+    const isPending = pendingPatientSet.has(pt.id) || pendingPatientSet.has(safeId);
+    const wasPreviouslySynced = knownPatientSet.has(pt.id) || knownPatientSet.has(safeId);
+
+    const shouldUpload =
+      isPending ||
+      (cloudTime === undefined && !wasPreviouslySynced) ||
+      (cloudTime !== undefined && localTime > cloudTime && isPending);
+
+    if (shouldUpload) {
+      try {
+        await savePatientToCloud(pt, user, teamEmails);
+        clearPendingUpsert('patients', pt.id);
+        clearPendingUpsert('patients', safeId);
+        addKnownSyncedIds('patients', [pt.id, safeId]);
+        uploadedPatientIds.push(pt.id, safeId);
+        uploaded++;
+      } catch (err) {
+        console.warn(`Failed syncing patient ${pt.id}:`, err);
+      }
     }
   }
 
@@ -1007,13 +1527,32 @@ export async function syncLocalRecordsToCloud(
     cloudFuneralTimes.set(d.id, Date.parse(data.updatedAt || data.createdAt || '') || 0);
   });
 
+  const uploadedFuneralIds: string[] = [];
+  const pendingFuneralSet = new Set(pendingOps.upserts.funerals);
+  const knownFuneralSet = new Set(knownSynced.funerals);
   for (const f of localFunerals) {
     const safeId = sanitizeFirestoreId(f.id, 'funeral');
     const localTime = Date.parse(f.updatedAt || f.createdAt || '') || Date.now();
     const cloudTime = cloudFuneralTimes.get(safeId);
-    if (cloudTime === undefined || localTime > cloudTime) {
-      await saveFuneralToCloud(f, user);
-      uploaded++;
+    const isPending = pendingFuneralSet.has(f.id) || pendingFuneralSet.has(safeId);
+    const wasPreviouslySynced = knownFuneralSet.has(f.id) || knownFuneralSet.has(safeId);
+
+    const shouldUpload =
+      isPending ||
+      (cloudTime === undefined && !wasPreviouslySynced) ||
+      (cloudTime !== undefined && localTime > cloudTime && isPending);
+
+    if (shouldUpload) {
+      try {
+        await saveFuneralToCloud(f, user, teamEmails);
+        clearPendingUpsert('funerals', f.id);
+        clearPendingUpsert('funerals', safeId);
+        addKnownSyncedIds('funerals', [f.id, safeId]);
+        uploadedFuneralIds.push(f.id, safeId);
+        uploaded++;
+      } catch (err) {
+        console.warn(`Failed syncing funeral ${f.id}:`, err);
+      }
     }
   }
 
@@ -1023,15 +1562,57 @@ export async function syncLocalRecordsToCloud(
     cloudDonationTimes.set(d.id, Date.parse(data.updatedAt || data.createdAt || '') || 0);
   });
 
+  const uploadedDonationIds: string[] = [];
+  const pendingDonationSet = new Set(pendingOps.upserts.donations);
+  const knownDonationSet = new Set(knownSynced.donations);
   for (const don of localDonations) {
     const safeId = sanitizeFirestoreId(don.id, 'donation');
     const localTime = Date.parse(don.updatedAt || don.createdAt || '') || Date.now();
     const cloudTime = cloudDonationTimes.get(safeId);
-    if (cloudTime === undefined || localTime > cloudTime) {
-      await saveDonationToCloud(don, user);
-      uploaded++;
+    const isPending = pendingDonationSet.has(don.id) || pendingDonationSet.has(safeId);
+    const wasPreviouslySynced = knownDonationSet.has(don.id) || knownDonationSet.has(safeId);
+
+    const shouldUpload =
+      isPending ||
+      (cloudTime === undefined && !wasPreviouslySynced) ||
+      (cloudTime !== undefined && localTime > cloudTime && isPending);
+
+    if (shouldUpload) {
+      try {
+        await saveDonationToCloud(don, user, teamEmails);
+        clearPendingUpsert('donations', don.id);
+        clearPendingUpsert('donations', safeId);
+        addKnownSyncedIds('donations', [don.id, safeId]);
+        uploadedDonationIds.push(don.id, safeId);
+        uploaded++;
+      } catch (err) {
+        console.warn(`Failed syncing donation ${don.id}:`, err);
+      }
     }
   }
 
-  return { uploaded };
+  // 3. Sync delivery plan settings if pending or not yet in Cloud
+  if (localDeliverySettings) {
+    try {
+      const dpSnap = await getDoc(doc(db, 'settings', 'delivery_plan'));
+      if (
+        pendingOps.upserts.deliverySettings ||
+        (!dpSnap.exists() &&
+          (localDeliverySettings.ricePricePerBag > 0 || localDeliverySettings.customRiceCount !== null))
+      ) {
+        await saveDeliveryPlanSettingsToCloud(localDeliverySettings, user, teamEmails);
+        setPendingDeliverySettings(false);
+        uploaded++;
+      }
+    } catch (err) {
+      console.warn('Delivery plan settings sync skipped:', err);
+    }
+  }
+
+  // Record confirmed Cloud & newly uploaded IDs as known synced (keep previously synced IDs until authoritative snapshot reconciles deletions)
+  addKnownSyncedIds('patients', [...cloudPatientTimes.keys(), ...uploadedPatientIds]);
+  addKnownSyncedIds('funerals', [...cloudFuneralTimes.keys(), ...uploadedFuneralIds]);
+  addKnownSyncedIds('donations', [...cloudDonationTimes.keys(), ...uploadedDonationIds]);
+
+  return { uploaded, deleted };
 }

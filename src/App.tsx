@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
+import { Cloud, CloudOff, AlertTriangle, RefreshCw } from 'lucide-react';
 import {
   ADMIN_USERS,
   AdminUser,
@@ -9,6 +10,7 @@ import {
   StatusHistoryLog,
   FuneralAssistanceRecord,
   DonationDistributionRecord,
+  DeliveryPlanSettings,
 } from './types';
 import {
   getStoredPatients,
@@ -22,6 +24,21 @@ import {
   clearAllStoredDonations,
   getStoredAdminId,
   saveStoredAdminId,
+  getStoredDeliverySettings,
+  saveStoredDeliverySettings,
+  getStoredAuthorizedEmails,
+  getPendingOps,
+  markPendingUpsert,
+  clearPendingUpsert,
+  markPendingDelete,
+  clearPendingDelete,
+  setPendingDeliverySettings,
+  clearAllPendingOps,
+  getKnownSyncedIds,
+  addKnownSyncedIds,
+  replaceKnownSyncedIds,
+  removeKnownSyncedId,
+  clearAllKnownSyncedIds,
 } from './utils/storage';
 import { Header } from './components/Header';
 import { PatientList } from './components/PatientList';
@@ -33,7 +50,9 @@ import { FuneralAssistanceView } from './components/FuneralAssistanceView';
 import { DonationView } from './components/DonationView';
 import { UiFeedbackProvider, useUiFeedback } from './components/UiFeedback';
 import { formatThaiDate } from './utils/idCard';
+import { sanitizeFirestoreId } from './utils/image';
 import {
+  SUPER_ADMIN_EMAIL,
   subscribeToAuth,
   testFirestoreConnection,
   signInWithGoogle,
@@ -44,12 +63,16 @@ import {
   subscribeToCloudCollections,
   syncLocalRecordsToCloud,
   mergeRecordsNonDestructively,
+  reconcileWithCloudSnapshot,
   savePatientToCloud,
   saveDeliveryToCloud,
   saveFuneralToCloud,
   deleteFuneralFromCloud,
   saveDonationToCloud,
   deleteDonationFromCloud,
+  saveDeliveryPlanSettingsToCloud,
+  fetchWorkspaceAuthorizedEmails,
+  saveWorkspaceAuthorizedEmails,
 } from './services/firestoreSync';
 
 function AppContent() {
@@ -58,20 +81,30 @@ function AppContent() {
   const [patients, setPatients] = useState<PatientRecord[]>(() => getStoredPatients());
   const [funerals, setFunerals] = useState<FuneralAssistanceRecord[]>(() => getStoredFunerals());
   const [donations, setDonations] = useState<DonationDistributionRecord[]>(() => getStoredDonations());
+  const [deliverySettings, setDeliverySettings] = useState<DeliveryPlanSettings>(() =>
+    getStoredDeliverySettings()
+  );
+  const [authorizedEmails, setAuthorizedEmails] = useState<string[]>(() =>
+    getStoredAuthorizedEmails()
+  );
   const [currentTab, setCurrentTab] = useState<string>('list');
   const [editingPatient, setEditingPatient] = useState<PatientRecord | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [isCloudModalOpen, setIsCloudModalOpen] = useState<boolean>(false);
 
   // Firebase Auth & Sync states
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [cloudStatus, setCloudStatus] = useState<'disconnected' | 'syncing' | 'synced' | 'error'>('disconnected');
+  const [cloudErrorReason, setCloudErrorReason] = useState<'permission-denied' | 'network' | null>(null);
+  const [initialCloudLoaded, setInitialCloudLoaded] = useState<boolean>(false);
 
   // Refs for latest state inside async callbacks
   const patientsRef = useRef<PatientRecord[]>(patients);
   const funeralsRef = useRef<FuneralAssistanceRecord[]>(funerals);
   const donationsRef = useRef<DonationDistributionRecord[]>(donations);
-  const deletedFuneralsRef = useRef<Set<string>>(new Set());
-  const deletedDonationsRef = useRef<Set<string>>(new Set());
+  const deliverySettingsRef = useRef<DeliveryPlanSettings>(deliverySettings);
+  const authorizedEmailsRef = useRef<string[]>(authorizedEmails);
+  const deliverySyncTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     patientsRef.current = patients;
@@ -84,6 +117,14 @@ function AppContent() {
   useEffect(() => {
     donationsRef.current = donations;
   }, [donations]);
+
+  useEffect(() => {
+    deliverySettingsRef.current = deliverySettings;
+  }, [deliverySettings]);
+
+  useEffect(() => {
+    authorizedEmailsRef.current = authorizedEmails;
+  }, [authorizedEmails]);
 
   // Current logged in admin / staff role
   const [currentAdmin, setCurrentAdmin] = useState<AdminUser>(() => {
@@ -114,6 +155,7 @@ function AppContent() {
   // Subscribe to Firebase Auth & Realtime Cloud Firestore Sync
   useEffect(() => {
     let unsubCloud: (() => void) | null = null;
+    let cancelled = false;
 
     const unsubAuth = subscribeToAuth(async (user) => {
       setFirebaseUser(user);
@@ -124,72 +166,216 @@ function AppContent() {
 
       if (!user) {
         setCloudStatus('disconnected');
+        setCloudErrorReason(null);
+        setInitialCloudLoaded(false);
         return;
       }
 
       setCloudStatus('syncing');
+      setCloudErrorReason(null);
+      setInitialCloudLoaded(false);
+
       try {
         await ensureSuperAdminDirectory(user);
+        const teamEmails = await fetchWorkspaceAuthorizedEmails(user);
+        if (cancelled) return;
+        setAuthorizedEmails(teamEmails);
+        authorizedEmailsRef.current = teamEmails;
 
-        // Migrate / upload any unsynced local records first so zero local data is lost
+        // Flush pending offline deletes & upload any unsynced local records first
         const migration = await syncLocalRecordsToCloud(
           user,
           patientsRef.current,
           funeralsRef.current,
-          donationsRef.current
+          donationsRef.current,
+          deliverySettingsRef.current,
+          teamEmails
         );
-        if (migration.uploaded > 0) {
-          showToast(`ซิงค์ข้อมูลจากเครื่องขึ้น Cloud Firestore สำเร็จ ${migration.uploaded} รายการ`, 'success');
+        if (cancelled) return;
+
+        if (migration.uploaded > 0 || migration.deleted > 0) {
+          showToast(
+            `ซิงค์ข้อมูลกับ Cloud Firestore สำเร็จ (อัปโหลด ${migration.uploaded} / ลบ ${migration.deleted} รายการ)`,
+            'success'
+          );
         }
 
         unsubCloud = subscribeToCloudCollections(user, {
-          onPatients: (cloudPatients) => {
+          getLocalPatients: () => patientsRef.current,
+          getLocalFunerals: () => funeralsRef.current,
+          getLocalDonations: () => donationsRef.current,
+          onPatients: (cloudPatients, fromCache) => {
+            const pending = getPendingOps();
+            const known = getKnownSyncedIds();
+            const pendingUpsertSet = new Set(pending.upserts.patients);
+            const knownSet = new Set(known.patients);
+
             setPatients((prevLocal) => {
-              const merged = mergeRecordsNonDestructively(cloudPatients, prevLocal);
-              saveStoredPatients(merged);
-              return merged;
+              const next = reconcileWithCloudSnapshot(
+                cloudPatients,
+                prevLocal,
+                pendingUpsertSet,
+                new Set(),
+                knownSet,
+                !fromCache
+              );
+              saveStoredPatients(next);
+              return next;
             });
+
+            if (!fromCache) {
+              replaceKnownSyncedIds(
+                'patients',
+                cloudPatients.map((p) => p.id)
+              );
+              setInitialCloudLoaded(true);
+            }
+            setCloudErrorReason(null);
             setCloudStatus('synced');
           },
-          onFunerals: (cloudFunerals) => {
+          onFunerals: (cloudFunerals, fromCache) => {
+            const pending = getPendingOps();
+            const known = getKnownSyncedIds();
+            const pendingUpsertSet = new Set(pending.upserts.funerals);
+            const pendingDeleteSet = new Set(pending.deletes.funerals);
+            const knownSet = new Set(known.funerals);
+
             setFunerals((prevLocal) => {
-              const merged = mergeRecordsNonDestructively(
+              const next = reconcileWithCloudSnapshot(
                 cloudFunerals,
                 prevLocal,
-                deletedFuneralsRef.current
+                pendingUpsertSet,
+                pendingDeleteSet,
+                knownSet,
+                !fromCache
               );
-              saveStoredFunerals(merged);
-              return merged;
+              saveStoredFunerals(next);
+              return next;
             });
+
+            if (!fromCache) {
+              replaceKnownSyncedIds(
+                'funerals',
+                cloudFunerals.map((f) => f.id)
+              );
+              setInitialCloudLoaded(true);
+            }
+            setCloudErrorReason(null);
             setCloudStatus('synced');
           },
-          onDonations: (cloudDonations) => {
+          onDonations: (cloudDonations, fromCache) => {
+            const pending = getPendingOps();
+            const known = getKnownSyncedIds();
+            const pendingUpsertSet = new Set(pending.upserts.donations);
+            const pendingDeleteSet = new Set(pending.deletes.donations);
+            const knownSet = new Set(known.donations);
+
             setDonations((prevLocal) => {
-              const merged = mergeRecordsNonDestructively(
+              const next = reconcileWithCloudSnapshot(
                 cloudDonations,
                 prevLocal,
-                deletedDonationsRef.current
+                pendingUpsertSet,
+                pendingDeleteSet,
+                knownSet,
+                !fromCache
               );
-              saveStoredDonations(merged);
-              return merged;
+              saveStoredDonations(next);
+              return next;
             });
+
+            if (!fromCache) {
+              replaceKnownSyncedIds(
+                'donations',
+                cloudDonations.map((d) => d.id)
+              );
+              setInitialCloudLoaded(true);
+            }
+            setCloudErrorReason(null);
             setCloudStatus('synced');
           },
-          onError: () => {
+          onDeliverySettings: (cloudSettings, fromCache) => {
+            const pending = getPendingOps();
+            if (!pending.upserts.deliverySettings) {
+              setDeliverySettings(cloudSettings);
+              deliverySettingsRef.current = cloudSettings;
+              saveStoredDeliverySettings(cloudSettings);
+            } else if (!fromCache) {
+              const cloudTime = Date.parse(cloudSettings.updatedAt || '') || 0;
+              const localTime = Date.parse(deliverySettingsRef.current.updatedAt || '') || 0;
+              if (cloudTime > localTime) {
+                setDeliverySettings(cloudSettings);
+                deliverySettingsRef.current = cloudSettings;
+                saveStoredDeliverySettings(cloudSettings);
+                setPendingDeliverySettings(false);
+              }
+            }
+          },
+          onAuthorizedEmails: (emails) => {
+            setAuthorizedEmails(emails);
+            authorizedEmailsRef.current = emails;
+          },
+          onError: (errDetail) => {
             setCloudStatus('error');
+            setCloudErrorReason(errDetail.isPermissionError ? 'permission-denied' : 'network');
+            setInitialCloudLoaded(true);
           },
         });
-      } catch (err) {
+      } catch (err: any) {
+        if (cancelled) return;
         console.error('Firebase sync initialization failed:', err);
+        const msg = err instanceof Error ? err.message : String(err);
+        const isPerm =
+          msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient');
         setCloudStatus('error');
+        setCloudErrorReason(isPerm ? 'permission-denied' : 'network');
+        setInitialCloudLoaded(true);
       }
     });
 
     return () => {
+      cancelled = true;
       unsubAuth();
       if (unsubCloud) unsubCloud();
     };
   }, [showToast]);
+
+  // Auto-flush queued offline operations whenever network connection returns
+  useEffect(() => {
+    if (!isOnline || !firebaseUser) return;
+    const pending = getPendingOps();
+    const hasPending =
+      pending.upserts.patients.length > 0 ||
+      pending.upserts.funerals.length > 0 ||
+      pending.upserts.donations.length > 0 ||
+      pending.upserts.deliverySettings ||
+      pending.deletes.funerals.length > 0 ||
+      pending.deletes.donations.length > 0;
+
+    if (!hasPending) return;
+
+    setCloudStatus('syncing');
+    syncLocalRecordsToCloud(
+      firebaseUser,
+      patientsRef.current,
+      funeralsRef.current,
+      donationsRef.current,
+      deliverySettingsRef.current,
+      authorizedEmailsRef.current
+    )
+      .then((res) => {
+        setCloudStatus('synced');
+        setCloudErrorReason(null);
+        if (res.uploaded > 0 || res.deleted > 0) {
+          showToast(
+            `ซิงค์รายการที่ค้างอยู่ขึ้น Cloud สำเร็จ (${res.uploaded + res.deleted} รายการ)`,
+            'success'
+          );
+        }
+      })
+      .catch(() => {
+        setCloudStatus('error');
+      });
+  }, [isOnline, firebaseUser, showToast]);
 
   const handleCloudSignIn = useCallback(async () => {
     try {
@@ -218,24 +404,88 @@ function AppContent() {
     }
     setCloudStatus('syncing');
     try {
+      const teamEmails = await fetchWorkspaceAuthorizedEmails(firebaseUser);
+      setAuthorizedEmails(teamEmails);
+      authorizedEmailsRef.current = teamEmails;
+
       const res = await syncLocalRecordsToCloud(
         firebaseUser,
         patientsRef.current,
         funeralsRef.current,
-        donationsRef.current
+        donationsRef.current,
+        deliverySettingsRef.current,
+        teamEmails
       );
       setCloudStatus('synced');
+      setCloudErrorReason(null);
       showToast(
-        res.uploaded > 0
-          ? `ซิงค์ข้อมูลขึ้น Cloud สำเร็จ ${res.uploaded} รายการ`
+        res.uploaded > 0 || res.deleted > 0
+          ? `ซิงค์ข้อมูลกับ Cloud สำเร็จ (อัปโหลด ${res.uploaded} / ลบ ${res.deleted} รายการ)`
           : 'ข้อมูลทั้งหมดตรงกับฐานข้อมูล Cloud แล้ว',
         'success'
       );
-    } catch {
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isPerm =
+        msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient');
       setCloudStatus('error');
-      showToast('ไม่สามารถซิงค์ข้อมูลขึ้น Cloud ได้ในขณะนี้ ข้อมูลยังคงถูกบันทึกไว้ในเครื่อง', 'warning');
+      setCloudErrorReason(isPerm ? 'permission-denied' : 'network');
+      showToast(
+        isPerm
+          ? 'บัญชี Google นี้ยังไม่ได้รับสิทธิ์เข้าถึงข้อมูลกลาง กรุณาใช้บัญชีหลักหรือติดต่อผู้ดูแลระบบ'
+          : 'ไม่สามารถซิงค์ข้อมูลขึ้น Cloud ได้ในขณะนี้ ข้อมูลยังคงถูกบันทึกไว้ในเครื่อง',
+        isPerm ? 'error' : 'warning'
+      );
     }
   }, [firebaseUser, handleCloudSignIn, showToast]);
+
+  const handleSaveAuthorizedEmails = useCallback(
+    async (nextEmails: string[]) => {
+      if (!firebaseUser) return;
+      const updated = await saveWorkspaceAuthorizedEmails(nextEmails, firebaseUser);
+      setAuthorizedEmails(updated);
+      authorizedEmailsRef.current = updated;
+      showToast('อัปเดตรายชื่อบัญชีที่ใช้งานข้ามเครื่องสำเร็จแล้ว', 'success');
+    },
+    [firebaseUser, showToast]
+  );
+
+  // Update Delivery Plan shared settings (immediate local + debounced Cloud save)
+  const handleUpdateDeliverySettings = useCallback(
+    (partial: Partial<DeliveryPlanSettings>) => {
+      const nextSettings: DeliveryPlanSettings = {
+        ...deliverySettingsRef.current,
+        ...partial,
+        updatedAt: new Date().toISOString(),
+      };
+      setDeliverySettings(nextSettings);
+      deliverySettingsRef.current = nextSettings;
+      saveStoredDeliverySettings(nextSettings);
+      setPendingDeliverySettings(true);
+
+      if (!firebaseUser) return;
+      if (deliverySyncTimerRef.current) {
+        window.clearTimeout(deliverySyncTimerRef.current);
+      }
+      setCloudStatus('syncing');
+      deliverySyncTimerRef.current = window.setTimeout(() => {
+        saveDeliveryPlanSettingsToCloud(
+          deliverySettingsRef.current,
+          firebaseUser,
+          authorizedEmailsRef.current
+        )
+          .then(() => {
+            setPendingDeliverySettings(false);
+            setCloudStatus('synced');
+            setCloudErrorReason(null);
+          })
+          .catch(() => {
+            setCloudStatus('error');
+          });
+      }, 450);
+    },
+    [firebaseUser]
+  );
 
   // Save current admin change
   const handleChangeAdmin = (admin: AdminUser) => {
@@ -250,6 +500,8 @@ function AppContent() {
       createdAt: savedPatient.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    const safeId = sanitizeFirestoreId(normalized.id, 'pt');
+    markPendingUpsert('patients', normalized.id);
 
     setPatients((prev) => {
       const existsIndex = prev.findIndex((p) => p.id === normalized.id);
@@ -266,11 +518,17 @@ function AppContent() {
 
     if (firebaseUser) {
       setCloudStatus('syncing');
-      savePatientToCloud(normalized, firebaseUser)
-        .then(() => setCloudStatus('synced'))
+      savePatientToCloud(normalized, firebaseUser, authorizedEmailsRef.current)
+        .then(() => {
+          clearPendingUpsert('patients', normalized.id);
+          clearPendingUpsert('patients', safeId);
+          addKnownSyncedIds('patients', [normalized.id, safeId]);
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+        })
         .catch(() => {
           setCloudStatus('error');
-          showToast('บันทึกในเครื่องแล้ว แต่ซิงค์ขึ้น Cloud ไม่สำเร็จชั่วคราว', 'warning');
+          showToast('บันทึกในเครื่องแล้ว (รอซิงค์ขึ้น Cloud อัตโนมัติเมื่อเชื่อมต่อสำเร็จ)', 'warning');
         });
     }
 
@@ -306,6 +564,9 @@ function AppContent() {
       updatedAt: nowIso,
     };
 
+    const safeId = sanitizeFirestoreId(patientId, 'pt');
+    markPendingUpsert('patients', patientId);
+
     setPatients((prev) => {
       const updated = prev.map((p) => (p.id === patientId ? modifiedPatient : p));
       saveStoredPatients(updated);
@@ -314,9 +575,18 @@ function AppContent() {
 
     if (firebaseUser) {
       setCloudStatus('syncing');
-      savePatientToCloud(modifiedPatient, firebaseUser)
-        .then(() => setCloudStatus('synced'))
-        .catch(() => setCloudStatus('error'));
+      savePatientToCloud(modifiedPatient, firebaseUser, authorizedEmailsRef.current)
+        .then(() => {
+          clearPendingUpsert('patients', patientId);
+          clearPendingUpsert('patients', safeId);
+          addKnownSyncedIds('patients', [patientId, safeId]);
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+        })
+        .catch(() => {
+          setCloudStatus('error');
+          showToast('บันทึกสถานะในเครื่องแล้ว (รอซิงค์ขึ้น Cloud อัตโนมัติ)', 'warning');
+        });
     }
     showToast('ปรับสถานะผู้ป่วยเรียบร้อยแล้ว', 'info');
   };
@@ -344,6 +614,9 @@ function AppContent() {
       updatedAt: nowIso,
     };
 
+    const safeId = sanitizeFirestoreId(patientId, 'pt');
+    markPendingUpsert('patients', patientId);
+
     setPatients((prev) => {
       const updated = prev.map((p) => (p.id === patientId ? modifiedPatient : p));
       saveStoredPatients(updated);
@@ -352,9 +625,18 @@ function AppContent() {
 
     if (firebaseUser) {
       setCloudStatus('syncing');
-      savePatientToCloud(modifiedPatient, firebaseUser)
-        .then(() => setCloudStatus('synced'))
-        .catch(() => setCloudStatus('error'));
+      savePatientToCloud(modifiedPatient, firebaseUser, authorizedEmailsRef.current)
+        .then(() => {
+          clearPendingUpsert('patients', patientId);
+          clearPendingUpsert('patients', safeId);
+          addKnownSyncedIds('patients', [patientId, safeId]);
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+        })
+        .catch(() => {
+          setCloudStatus('error');
+          showToast('กู้คืนในเครื่องแล้ว (รอซิงค์ขึ้น Cloud อัตโนมัติ)', 'warning');
+        });
     }
     showToast('กู้คืนผู้ป่วยกลับเข้าสู่โครงการเรียบร้อยแล้ว', 'success');
   };
@@ -371,6 +653,9 @@ function AppContent() {
       updatedAt: nowIso,
     };
 
+    const safeId = sanitizeFirestoreId(patientId, 'pt');
+    markPendingUpsert('patients', patientId);
+
     setPatients((prev) => {
       const updated = prev.map((p) => (p.id === patientId ? modifiedPatient : p));
       saveStoredPatients(updated);
@@ -379,9 +664,18 @@ function AppContent() {
 
     if (firebaseUser) {
       setCloudStatus('syncing');
-      saveDeliveryToCloud(modifiedPatient, delivery, firebaseUser)
-        .then(() => setCloudStatus('synced'))
-        .catch(() => setCloudStatus('error'));
+      saveDeliveryToCloud(modifiedPatient, delivery, firebaseUser, authorizedEmailsRef.current)
+        .then(() => {
+          clearPendingUpsert('patients', patientId);
+          clearPendingUpsert('patients', safeId);
+          addKnownSyncedIds('patients', [patientId, safeId]);
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+        })
+        .catch(() => {
+          setCloudStatus('error');
+          showToast('บันทึกส่งมอบในเครื่องแล้ว (รอซิงค์ขึ้น Cloud อัตโนมัติ)', 'warning');
+        });
     }
   };
 
@@ -392,7 +686,10 @@ function AppContent() {
       createdAt: savedRecord.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    deletedFuneralsRef.current.delete(normalized.id);
+    const safeId = sanitizeFirestoreId(normalized.id, 'funeral');
+    clearPendingDelete('funerals', normalized.id);
+    clearPendingDelete('funerals', safeId);
+    markPendingUpsert('funerals', normalized.id);
 
     setFunerals((prev) => {
       const idx = prev.findIndex((f) => f.id === normalized.id);
@@ -409,23 +706,49 @@ function AppContent() {
 
     if (firebaseUser) {
       setCloudStatus('syncing');
-      saveFuneralToCloud(normalized, firebaseUser)
-        .then(() => setCloudStatus('synced'))
-        .catch(() => setCloudStatus('error'));
+      saveFuneralToCloud(normalized, firebaseUser, authorizedEmailsRef.current)
+        .then(() => {
+          clearPendingUpsert('funerals', normalized.id);
+          clearPendingUpsert('funerals', safeId);
+          addKnownSyncedIds('funerals', [normalized.id, safeId]);
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+        })
+        .catch(() => {
+          setCloudStatus('error');
+          showToast('บันทึกคำร้องในเครื่องแล้ว (รอซิงค์ขึ้น Cloud อัตโนมัติ)', 'warning');
+        });
     }
     showToast(`บันทึกคำร้องอนุเคราะห์เผาศพ (${normalized.code}) เรียบร้อยแล้ว`, 'success');
   };
 
   // Delete funeral assistance record
   const handleDeleteFuneral = (id: string) => {
-    deletedFuneralsRef.current.add(id);
+    const safeId = sanitizeFirestoreId(id, 'funeral');
+    clearPendingUpsert('funerals', id);
+    clearPendingUpsert('funerals', safeId);
+    markPendingDelete('funerals', id);
+
     setFunerals((prev) => {
       const updated = prev.filter((f) => f.id !== id);
       saveStoredFunerals(updated);
       return updated;
     });
     if (firebaseUser) {
-      deleteFuneralFromCloud(id).catch(() => setCloudStatus('error'));
+      setCloudStatus('syncing');
+      deleteFuneralFromCloud(id, firebaseUser)
+        .then(() => {
+          clearPendingDelete('funerals', id);
+          clearPendingDelete('funerals', safeId);
+          removeKnownSyncedId('funerals', id);
+          removeKnownSyncedId('funerals', safeId);
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+        })
+        .catch(() => {
+          setCloudStatus('error');
+          showToast('ลบในเครื่องแล้ว (รออัปเดตการลบบน Cloud เมื่อเชื่อมต่อสำเร็จ)', 'warning');
+        });
     }
     showToast('ลบรายการอนุเคราะห์เผาศพเรียบร้อยแล้ว', 'info');
   };
@@ -437,7 +760,10 @@ function AppContent() {
       createdAt: savedRecord.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    deletedDonationsRef.current.delete(normalized.id);
+    const safeId = sanitizeFirestoreId(normalized.id, 'donation');
+    clearPendingDelete('donations', normalized.id);
+    clearPendingDelete('donations', safeId);
+    markPendingUpsert('donations', normalized.id);
 
     setDonations((prev) => {
       const idx = prev.findIndex((d) => d.id === normalized.id);
@@ -454,23 +780,49 @@ function AppContent() {
 
     if (firebaseUser) {
       setCloudStatus('syncing');
-      saveDonationToCloud(normalized, firebaseUser)
-        .then(() => setCloudStatus('synced'))
-        .catch(() => setCloudStatus('error'));
+      saveDonationToCloud(normalized, firebaseUser, authorizedEmailsRef.current)
+        .then(() => {
+          clearPendingUpsert('donations', normalized.id);
+          clearPendingUpsert('donations', safeId);
+          addKnownSyncedIds('donations', [normalized.id, safeId]);
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+        })
+        .catch(() => {
+          setCloudStatus('error');
+          showToast('บันทึกบริจาคในเครื่องแล้ว (รอซิงค์ขึ้น Cloud อัตโนมัติ)', 'warning');
+        });
     }
     showToast(`บันทึกการบริจาคสิ่งของ (${normalized.code}) เรียบร้อยแล้ว`, 'success');
   };
 
   // Delete donation record
   const handleDeleteDonation = (id: string) => {
-    deletedDonationsRef.current.add(id);
+    const safeId = sanitizeFirestoreId(id, 'donation');
+    clearPendingUpsert('donations', id);
+    clearPendingUpsert('donations', safeId);
+    markPendingDelete('donations', id);
+
     setDonations((prev) => {
       const updated = prev.filter((d) => d.id !== id);
       saveStoredDonations(updated);
       return updated;
     });
     if (firebaseUser) {
-      deleteDonationFromCloud(id).catch(() => setCloudStatus('error'));
+      setCloudStatus('syncing');
+      deleteDonationFromCloud(id, firebaseUser)
+        .then(() => {
+          clearPendingDelete('donations', id);
+          clearPendingDelete('donations', safeId);
+          removeKnownSyncedId('donations', id);
+          removeKnownSyncedId('donations', safeId);
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+        })
+        .catch(() => {
+          setCloudStatus('error');
+          showToast('ลบในเครื่องแล้ว (รออัปเดตการลบบน Cloud เมื่อเชื่อมต่อสำเร็จ)', 'warning');
+        });
     }
     showToast('ลบรายการบริจาคเรียบร้อยแล้ว', 'info');
   };
@@ -486,16 +838,19 @@ function AppContent() {
     let nextDonations = donationsRef.current;
 
     if (importedPatients && Array.isArray(importedPatients)) {
+      importedPatients.forEach((p) => markPendingUpsert('patients', p.id));
       nextPatients = mergeRecordsNonDestructively(importedPatients, patientsRef.current);
       setPatients(nextPatients);
       saveStoredPatients(nextPatients);
     }
     if (importedFunerals && Array.isArray(importedFunerals)) {
+      importedFunerals.forEach((f) => markPendingUpsert('funerals', f.id));
       nextFunerals = mergeRecordsNonDestructively(importedFunerals, funeralsRef.current);
       setFunerals(nextFunerals);
       saveStoredFunerals(nextFunerals);
     }
     if (importedDonations && Array.isArray(importedDonations)) {
+      importedDonations.forEach((d) => markPendingUpsert('donations', d.id));
       nextDonations = mergeRecordsNonDestructively(importedDonations, donationsRef.current);
       setDonations(nextDonations);
       saveStoredDonations(nextDonations);
@@ -506,7 +861,14 @@ function AppContent() {
     if (firebaseUser) {
       setCloudStatus('syncing');
       try {
-        await syncLocalRecordsToCloud(firebaseUser, nextPatients, nextFunerals, nextDonations);
+        await syncLocalRecordsToCloud(
+          firebaseUser,
+          nextPatients,
+          nextFunerals,
+          nextDonations,
+          deliverySettingsRef.current,
+          authorizedEmailsRef.current
+        );
         setCloudStatus('synced');
         showToast('นำเข้าและซิงค์ข้อมูลสำรองขึ้น Cloud สำเร็จแล้ว', 'success');
       } catch {
@@ -531,6 +893,8 @@ function AppContent() {
       clearAllStoredPatients();
       clearAllStoredFunerals();
       clearAllStoredDonations();
+      clearAllPendingOps();
+      clearAllKnownSyncedIds();
       setPatients([]);
       setFunerals([]);
       setDonations([]);
@@ -565,13 +929,83 @@ function AppContent() {
         isOnline={isOnline}
         firebaseUser={firebaseUser}
         cloudStatus={cloudStatus}
+        cloudErrorReason={cloudErrorReason}
+        authorizedEmails={authorizedEmails}
+        onSaveAuthorizedEmails={handleSaveAuthorizedEmails}
         onCloudSignIn={handleCloudSignIn}
         onCloudSignOut={handleCloudSignOut}
         onManualCloudSync={handleManualCloudSync}
+        externalLoginOpen={isCloudModalOpen}
+        onExternalLoginClose={() => setIsCloudModalOpen(false)}
       />
 
       {/* Main Content Areas */}
       <main className="flex-1 pb-16">
+        {/* Cross-Device Cloud Sync Onboarding & Diagnostic Banners */}
+        {!firebaseUser && (
+          <div className="no-print max-w-7xl mx-auto px-3 sm:px-4 pt-4">
+            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+                <div className="p-2 bg-amber-100 text-amber-700 rounded-xl shrink-0">
+                  <CloudOff className="w-5 h-5" />
+                </div>
+                <div className="text-xs text-amber-950">
+                  <div className="font-bold text-sm">
+                    เครื่องนี้ยังไม่ได้เชื่อมต่อฐานข้อมูลกลาง Cloud Firestore
+                  </div>
+                  <p className="text-amber-800 mt-0.5 leading-relaxed">
+                    หากต้องการให้ข้อมูลผู้ป่วย คำร้องเผาศพ แผนส่งมอบ และสิ่งของบริจาคแสดงผลตรงกันและแก้ไขร่วมกันได้ทุกเครื่อง กรุณาเข้าสู่ระบบด้วยบัญชี Google ({SUPER_ADMIN_EMAIL} หรือบัญชีทีมที่ได้รับอนุญาต)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloudSignIn}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
+              >
+                <Cloud className="w-4 h-4" />
+                <span>เชื่อมต่อ Google เพื่อซิงค์ข้อมูลข้ามเครื่อง</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {firebaseUser && cloudErrorReason === 'permission-denied' && (
+          <div className="no-print max-w-7xl mx-auto px-3 sm:px-4 pt-4">
+            <div className="bg-red-50 border border-red-300 rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+                <div className="p-2 bg-red-100 text-red-700 rounded-xl shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="text-xs text-red-950">
+                  <div className="font-bold text-sm">
+                    บัญชี {firebaseUser.email} ยังไม่ได้รับสิทธิ์เข้าถึงฐานข้อมูลกลาง
+                  </div>
+                  <p className="text-red-800 mt-0.5 leading-relaxed">
+                    กรุณาสลับไปใช้บัญชีหลัก ({SUPER_ADMIN_EMAIL}) หรือให้ผู้ดูแลระบบเพิ่มอีเมลนี้ในหน้าจัดการสิทธิ์ Cloud
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCloudModalOpen(true)}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer shrink-0"
+              >
+                สลับบัญชี / จัดการสิทธิ์ Cloud
+              </button>
+            </div>
+          </div>
+        )}
+
+        {firebaseUser && !initialCloudLoaded && cloudStatus === 'syncing' && (
+          <div className="no-print max-w-7xl mx-auto px-3 sm:px-4 pt-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 flex items-center gap-2.5 text-xs font-semibold text-blue-900">
+              <RefreshCw className="w-4 h-4 animate-spin text-blue-600 shrink-0" />
+              <span>กำลังดาวน์โหลดและปรับข้อมูลล่าสุดจาก Cloud Firestore ให้ตรงกันทุกเครื่อง...</span>
+            </div>
+          </div>
+        )}
+
         {currentTab === 'list' && (
           <PatientList
             patients={patients}
@@ -622,6 +1056,8 @@ function AppContent() {
             patients={patients}
             onRecordDelivery={handleRecordDelivery}
             currentAdmin={currentAdmin}
+            deliverySettings={deliverySettings}
+            onUpdateDeliverySettings={handleUpdateDeliverySettings}
           />
         )}
 

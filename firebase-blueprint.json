@@ -254,6 +254,10 @@
           "type": "string",
           "maxLength": 3000
         },
+        "authorizedEmails": {
+          "type": "array",
+          "description": "Verified staff emails authorized to read/write this shared record"
+        },
         "interviewerName": {
           "type": "string",
           "maxLength": 200
@@ -330,6 +334,9 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorizedEmails": {
+          "type": "array"
         },
         "deliveryDate": {
           "type": "string",
@@ -416,6 +423,9 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "authorizedEmails": {
+          "type": "array"
+        },
         "kind": {
           "type": "string",
           "enum": ["photo", "document"]
@@ -482,6 +492,9 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorizedEmails": {
+          "type": "array"
         },
         "code": {
           "type": "string",
@@ -668,6 +681,9 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "authorizedEmails": {
+          "type": "array"
+        },
         "code": {
           "type": "string",
           "minLength": 1,
@@ -835,12 +851,96 @@
         "serverCreatedAt",
         "serverUpdatedAt"
       ]
+    },
+    "WorkspaceSettings": {
+      "title": "WorkspaceSettings",
+      "description": "Shared foundation workspace access allowlist managed by Super Admin",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "authorizedEmails": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "updatedBy": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "serverCreatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "authorizedEmails", "updatedAt", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "DeliveryPlanSettings": {
+      "title": "DeliveryPlanSettings",
+      "description": "Shared monthly delivery plan parameters (rice price per bag, custom rice bag count, delivery month)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorizedEmails": {
+          "type": "array"
+        },
+        "ricePricePerBag": {
+          "type": "number"
+        },
+        "customRiceCount": {
+          "type": "number"
+        },
+        "currentMonth": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "serverCreatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "ownerUid", "ricePricePerBag", "currentMonth", "updatedAt", "serverCreatedAt", "serverUpdatedAt"]
     }
   },
   "firestore": {
     "/admins/{uid}": {
       "schema": { "$ref": "#/entities/AdminMember" },
       "description": "Authorized staff members for BD-Care foundation operations"
+    },
+    "/settings/workspace": {
+      "schema": { "$ref": "#/entities/WorkspaceSettings" },
+      "description": "Authorized staff email allowlist for cross-device collaboration"
+    },
+    "/settings/delivery_plan": {
+      "schema": { "$ref": "#/entities/DeliveryPlanSettings" },
+      "description": "Synchronized delivery plan rice bag count, price per bag, and delivery month"
     },
     "/patients/{patientId}": {
       "schema": { "$ref": "#/entities/PatientRecord" },

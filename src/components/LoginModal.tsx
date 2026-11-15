@@ -14,9 +14,12 @@ import {
   Cloud,
   RefreshCw,
   LogOut,
+  Users,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { ADMIN_USERS, AdminUser } from '../types';
-import { isSuperAdminUser } from '../firebase';
+import { SUPER_ADMIN_EMAIL, isSuperAdminUser } from '../firebase';
 
 interface LoginModalProps {
   currentAdmin: AdminUser;
@@ -25,6 +28,9 @@ interface LoginModalProps {
   onLoginSuccess: (admin: AdminUser) => void;
   firebaseUser?: FirebaseUser | null;
   cloudStatus?: 'disconnected' | 'syncing' | 'synced' | 'error';
+  cloudErrorReason?: 'permission-denied' | 'network' | null;
+  authorizedEmails?: string[];
+  onSaveAuthorizedEmails?: (emails: string[]) => Promise<void>;
   onCloudSignIn?: () => void;
   onCloudSignOut?: () => void;
   onManualCloudSync?: () => void;
@@ -37,6 +43,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   onLoginSuccess,
   firebaseUser = null,
   cloudStatus = 'disconnected',
+  cloudErrorReason = null,
+  authorizedEmails = [SUPER_ADMIN_EMAIL],
+  onSaveAuthorizedEmails,
   onCloudSignIn,
   onCloudSignOut,
   onManualCloudSync,
@@ -46,6 +55,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [newTeamEmail, setNewTeamEmail] = useState('');
+  const [isSavingEmails, setIsSavingEmails] = useState(false);
+  const [teamMsg, setTeamMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   if (!isOpen) return null;
 
@@ -74,6 +86,45 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setUsername(admin.username);
     setPassword(admin.password || '');
     setErrorMsg('');
+  };
+
+  const handleAddTeamEmail = async () => {
+    if (!onSaveAuthorizedEmails) return;
+    const clean = newTeamEmail.trim().toLowerCase();
+    if (!clean || !clean.includes('@') || !clean.includes('.')) {
+      setTeamMsg({ type: 'err', text: 'กรุณาระบุอีเมล Google ให้ถูกต้อง เช่น staff@gmail.com' });
+      return;
+    }
+    if (authorizedEmails.includes(clean)) {
+      setTeamMsg({ type: 'err', text: 'อีเมลนี้อยู่ในรายการได้รับสิทธิ์แล้ว' });
+      return;
+    }
+    setIsSavingEmails(true);
+    setTeamMsg(null);
+    try {
+      await onSaveAuthorizedEmails([...authorizedEmails, clean]);
+      setNewTeamEmail('');
+      setTeamMsg({ type: 'ok', text: `เพิ่มสิทธิ์ให้ ${clean} และอัปเดตฐานข้อมูลเรียบร้อยแล้ว` });
+    } catch {
+      setTeamMsg({ type: 'err', text: 'ไม่สามารถบันทึกสิทธิ์ได้ กรุณาลองใหม่อีกครั้ง' });
+    } finally {
+      setIsSavingEmails(false);
+    }
+  };
+
+  const handleRemoveTeamEmail = async (emailToRemove: string) => {
+    if (!onSaveAuthorizedEmails) return;
+    if (emailToRemove.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) return;
+    setIsSavingEmails(true);
+    setTeamMsg(null);
+    try {
+      await onSaveAuthorizedEmails(authorizedEmails.filter((e) => e !== emailToRemove));
+      setTeamMsg({ type: 'ok', text: `ยกเลิกสิทธิ์ของ ${emailToRemove} แล้ว` });
+    } catch {
+      setTeamMsg({ type: 'err', text: 'ไม่สามารถลบสิทธิ์ได้ กรุณาลองใหม่อีกครั้ง' });
+    } finally {
+      setIsSavingEmails(false);
+    }
   };
 
   return (
@@ -116,7 +167,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </div>
 
             {firebaseUser ? (
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 <div className="text-xs text-slate-700 bg-white border border-blue-100 rounded-lg p-2.5 flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-bold text-slate-900 truncate">
@@ -140,6 +191,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                       : 'เชื่อมต่อแล้ว'}
                   </span>
                 </div>
+
+                {cloudErrorReason === 'permission-denied' && !isSuperAdminUser(firebaseUser) && (
+                  <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-[11.5px] text-red-800 space-y-1">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                      <span>บัญชีนี้ยังไม่ได้รับอนุญาตให้เข้าถึงข้อมูลกลาง</span>
+                    </div>
+                    <p className="text-red-700 leading-relaxed">
+                      กรุณาออกจากระบบแล้วเชื่อมต่อด้วยบัญชีหลัก ({SUPER_ADMIN_EMAIL}) หรือให้ผู้ดูแลระบบเพิ่มอีเมล{' '}
+                      <strong>{firebaseUser.email}</strong> ในเมนูสิทธิ์ทีมงานด้านล่าง
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -158,11 +223,84 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                     <span>ออก</span>
                   </button>
                 </div>
+
+                {/* Super Admin Team Allowlist for Multi-Device Access */}
+                {isSuperAdminUser(firebaseUser) && onSaveAuthorizedEmails && (
+                  <div className="mt-2 pt-2.5 border-t border-blue-200/80 space-y-2">
+                    <div className="text-[11px] font-bold text-blue-900 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-blue-700" />
+                      <span>บัญชี Google ที่ได้รับสิทธิ์ดูและแก้ไขข้อมูลร่วมกันทุกเครื่อง</span>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="email"
+                        value={newTeamEmail}
+                        onChange={(e) => setNewTeamEmail(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddTeamEmail();
+                          }
+                        }}
+                        placeholder="เพิ่มอีเมล Google เจ้าหน้าที่ เช่น name@gmail.com"
+                        className="flex-1 px-2.5 py-1.5 text-xs bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <button
+                        type="button"
+                        disabled={isSavingEmails}
+                        onClick={handleAddTeamEmail}
+                        className="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>เพิ่มสิทธิ์</span>
+                      </button>
+                    </div>
+                    {teamMsg && (
+                      <div
+                        className={`text-[11px] px-2.5 py-1.5 rounded-lg ${
+                          teamMsg.type === 'ok'
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : 'bg-red-50 text-red-700 border border-red-200'
+                        }`}
+                      >
+                        {teamMsg.text}
+                      </div>
+                    )}
+                    <div className="space-y-1 max-h-28 overflow-y-auto">
+                      {authorizedEmails.map((em) => {
+                        const isOwner = em.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+                        return (
+                          <div
+                            key={em}
+                            className="flex items-center justify-between bg-white px-2.5 py-1 rounded border border-blue-100 text-[11px]"
+                          >
+                            <span className="font-mono text-slate-700 truncate">{em}</span>
+                            {isOwner ? (
+                              <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded shrink-0">
+                                บัญชีหลัก
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isSavingEmails}
+                                onClick={() => handleRemoveTeamEmail(em)}
+                                className="text-red-500 hover:text-red-700 p-0.5 cursor-pointer"
+                                title="ลบสิทธิ์"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-2">
                 <p className="text-[11.5px] text-slate-600 leading-relaxed">
-                  เชื่อมต่อด้วยบัญชี Google เพื่อสำรองและซิงค์ข้อมูลผู้ป่วย คำร้องเผาศพ และสิ่งของบริจาคทั้งหมดแบบเรียลไทม์ ป้องกันข้อมูลสูญหายเมื่ออัปเดตแอป
+                  เชื่อมต่อด้วยบัญชี Google เพื่อสำรองและซิงค์ข้อมูลผู้ป่วย คำร้องเผาศพ แผนส่งมอบ และสิ่งของบริจาคทั้งหมดแบบเรียลไทม์ให้เหมือนกันทุกเครื่อง
                 </p>
                 <button
                   type="button"

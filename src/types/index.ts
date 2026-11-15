@@ -492,3 +492,24 @@ export interface DonationDistributionRecord {
   updatedAt: string;
 }
 
+export interface DeliveryPlanSettings {
+  ricePricePerBag: number;
+  customRiceCount: number | null;
+  currentMonth: string;
+  updatedAt: string;
+}
+
+export interface PendingOpsState {
+  upserts: {
+    patients: string[];
+    funerals: string[];
+    donations: string[];
+    deliverySettings: boolean;
+  };
+  deletes: {
+    patients: string[];
+    funerals: string[];
+    donations: string[];
+  };
+}
+

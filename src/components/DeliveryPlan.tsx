@@ -10,7 +10,14 @@ import {
   Send,
   HeartHandshake
 } from 'lucide-react';
-import { PatientRecord, SAMUT_PRAKAN_DISTRICTS, DiaperSize, MonthlyDelivery, AdminUser } from '../types';
+import {
+  PatientRecord,
+  SAMUT_PRAKAN_DISTRICTS,
+  DiaperSize,
+  MonthlyDelivery,
+  AdminUser,
+  DeliveryPlanSettings,
+} from '../types';
 import { formatCurrency, formatPhone, formatThaiMonthYear } from '../utils/idCard';
 import { PrintDeliveryPlanModal } from './PrintDeliveryPlanModal';
 import { useUiFeedback } from './UiFeedback';
@@ -19,32 +26,30 @@ interface DeliveryPlanProps {
   patients: PatientRecord[];
   onRecordDelivery: (patientId: string, delivery: MonthlyDelivery) => void;
   currentAdmin: AdminUser;
+  deliverySettings: DeliveryPlanSettings;
+  onUpdateDeliverySettings: (next: Partial<DeliveryPlanSettings>) => void;
 }
 
 export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
   patients,
   onRecordDelivery,
   currentAdmin,
+  deliverySettings,
+  onUpdateDeliverySettings,
 }) => {
   const { showToast } = useUiFeedback();
   const [selectedDistrict, setSelectedDistrict] = useState<string>('all');
-  const [currentMonth, setCurrentMonth] = useState<string>(() =>
-    formatThaiMonthYear(new Date().toISOString().slice(0, 10)) || 'พฤศจิกายน พ.ศ. 2569'
-  );
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [deliveringPatient, setDeliveringPatient] = useState<PatientRecord | null>(null);
   const [receiverInput, setReceiverInput] = useState('');
   const [receiverRelationInput, setReceiverRelationInput] = useState('ผู้ดูแล');
-  const [customRiceCount, setCustomRiceCount] = useState<number | null>(null);
-  const [ricePricePerBag, setRicePricePerBag] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('bdcare_rice_price_per_bag');
-      const parsed = saved ? parseFloat(saved) : 0;
-      return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-    } catch {
-      return 0;
-    }
-  });
+
+  const currentMonth =
+    deliverySettings.currentMonth ||
+    formatThaiMonthYear(new Date().toISOString().slice(0, 10)) ||
+    'พฤศจิกายน พ.ศ. 2569';
+  const customRiceCount = deliverySettings.customRiceCount;
+  const ricePricePerBag = deliverySettings.ricePricePerBag;
 
   // Only active patients receive monthly supplies
   const activePatients = patients.filter((p) => p.status === 'active');
@@ -165,7 +170,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
           <input
             type="text"
             value={currentMonth}
-            onChange={(e) => setCurrentMonth(e.target.value)}
+            onChange={(e) => onUpdateDeliverySettings({ currentMonth: e.target.value })}
             className="text-xs px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-medium w-40 text-center"
             placeholder="รอบเดือน เช่น พฤศจิกายน พ.ศ. 2569"
           />
@@ -211,7 +216,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
             {customRiceCount !== null && (
               <button
                 type="button"
-                onClick={() => setCustomRiceCount(null)}
+                onClick={() => onUpdateDeliverySettings({ customRiceCount: null })}
                 className="text-[10px] text-amber-700 hover:underline font-semibold cursor-pointer"
                 title={`คืนค่าตามยอดผู้ป่วย (${totalRice} ถุง)`}
               >
@@ -228,7 +233,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
                 value={effectiveRiceBags}
                 onChange={(e) => {
                   const val = Math.max(0, parseInt(e.target.value, 10) || 0);
-                  setCustomRiceCount(val);
+                  onUpdateDeliverySettings({ customRiceCount: val });
                 }}
                 className="w-full mt-0.5 px-2 py-1 text-sm font-black text-amber-600 bg-amber-50/50 border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
@@ -243,12 +248,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
                 placeholder="0"
                 onChange={(e) => {
                   const val = Math.max(0, parseFloat(e.target.value) || 0);
-                  setRicePricePerBag(val);
-                  try {
-                    localStorage.setItem('bdcare_rice_price_per_bag', String(val));
-                  } catch {
-                    /* ignore */
-                  }
+                  onUpdateDeliverySettings({ ricePricePerBag: val });
                 }}
                 className="w-full mt-0.5 px-2 py-1 text-sm font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
               />

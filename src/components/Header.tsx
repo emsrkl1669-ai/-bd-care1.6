@@ -54,9 +54,14 @@ interface HeaderProps {
   isOnline: boolean;
   firebaseUser?: User | null;
   cloudStatus?: 'disconnected' | 'syncing' | 'synced' | 'error';
+  cloudErrorReason?: 'permission-denied' | 'network' | null;
+  authorizedEmails?: string[];
+  onSaveAuthorizedEmails?: (emails: string[]) => Promise<void>;
   onCloudSignIn?: () => void;
   onCloudSignOut?: () => void;
   onManualCloudSync?: () => void;
+  externalLoginOpen?: boolean;
+  onExternalLoginClose?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -72,9 +77,14 @@ export const Header: React.FC<HeaderProps> = ({
   isOnline,
   firebaseUser = null,
   cloudStatus = 'disconnected',
+  cloudErrorReason = null,
+  authorizedEmails,
+  onSaveAuthorizedEmails,
   onCloudSignIn,
   onCloudSignOut,
   onManualCloudSync,
+  externalLoginOpen = false,
+  onExternalLoginClose,
 }) => {
   const { showToast } = useUiFeedback();
   const [isAdminDropdownOpen, setIsAdminDropdownOpen] = useState(false);
@@ -519,13 +529,19 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Login / Switch Account Modal */}
       <LoginModal
         currentAdmin={currentAdmin}
-        isOpen={isLoginModalOpen}
-        onClose={() => setIsLoginModalOpen(false)}
+        isOpen={isLoginModalOpen || externalLoginOpen}
+        onClose={() => {
+          setIsLoginModalOpen(false);
+          onExternalLoginClose?.();
+        }}
         onLoginSuccess={(newAdmin) => {
           setCurrentAdmin(newAdmin);
         }}
         firebaseUser={firebaseUser}
         cloudStatus={cloudStatus}
+        cloudErrorReason={cloudErrorReason}
+        authorizedEmails={authorizedEmails}
+        onSaveAuthorizedEmails={onSaveAuthorizedEmails}
         onCloudSignIn={onCloudSignIn}
         onCloudSignOut={onCloudSignOut}
         onManualCloudSync={onManualCloudSync}

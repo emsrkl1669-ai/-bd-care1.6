@@ -1,10 +1,22 @@
-import { PatientRecord, FuneralAssistanceRecord, DonationDistributionRecord } from '../types';
+import {
+  PatientRecord,
+  FuneralAssistanceRecord,
+  DonationDistributionRecord,
+  DeliveryPlanSettings,
+  PendingOpsState,
+} from '../types';
 import { generateQrCodeDataUrl, makeGoogleMapsUrl } from './qrcode';
+import { formatThaiMonthYear } from './idCard';
 
 const STORAGE_KEY = 'bdcare_patients_v1';
 const FUNERAL_STORAGE_KEY = 'bdcare_funerals_v1';
 const DONATION_STORAGE_KEY = 'bdcare_donations_v1';
 const CURRENT_ADMIN_KEY = 'bdcare_current_admin_id';
+const DELIVERY_SETTINGS_KEY = 'bdcare_delivery_settings_v1';
+const LEGACY_RICE_PRICE_KEY = 'bdcare_rice_price_per_bag';
+const PENDING_OPS_KEY = 'bdcare_pending_ops_v1';
+const KNOWN_SYNCED_KEY = 'bdcare_known_synced_v1';
+const AUTHORIZED_EMAILS_KEY = 'bdcare_authorized_emails_v1';
 
 // Empty default list - demo data removed per user request
 export const INITIAL_DEMO_PATIENTS: PatientRecord[] = [];
@@ -427,5 +439,223 @@ export function exportBackupJson(
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+}
+
+// ==========================================
+// Cross-Device Sync & Delivery Plan Settings
+// ==========================================
+
+export function getDefaultDeliverySettings(): DeliveryPlanSettings {
+  let legacyPrice = 0;
+  try {
+    const saved = localStorage.getItem(LEGACY_RICE_PRICE_KEY);
+    const parsed = saved ? parseFloat(saved) : 0;
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      legacyPrice = parsed;
+    }
+  } catch {
+    /* ignore */
+  }
+  return {
+    ricePricePerBag: legacyPrice,
+    customRiceCount: null,
+    currentMonth: formatThaiMonthYear(new Date().toISOString().slice(0, 10)) || 'พฤศจิกายน พ.ศ. 2569',
+    updatedAt: '',
+  };
+}
+
+export function getStoredDeliverySettings(): DeliveryPlanSettings {
+  const defaults = getDefaultDeliverySettings();
+  try {
+    const raw = localStorage.getItem(DELIVERY_SETTINGS_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return defaults;
+    const price = Number(parsed.ricePricePerBag);
+    const customRice =
+      parsed.customRiceCount === null || parsed.customRiceCount === undefined
+        ? null
+        : Number(parsed.customRiceCount);
+    return {
+      ricePricePerBag: Number.isFinite(price) && price >= 0 ? price : defaults.ricePricePerBag,
+      customRiceCount:
+        customRice !== null && Number.isFinite(customRice) && customRice >= 0 ? customRice : null,
+      currentMonth:
+        typeof parsed.currentMonth === 'string' && parsed.currentMonth.trim()
+          ? parsed.currentMonth
+          : defaults.currentMonth,
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+export function saveStoredDeliverySettings(settings: DeliveryPlanSettings): void {
+  try {
+    localStorage.setItem(DELIVERY_SETTINGS_KEY, JSON.stringify(settings));
+    localStorage.setItem(LEGACY_RICE_PRICE_KEY, String(settings.ricePricePerBag || 0));
+  } catch (err) {
+    console.error('Failed to save delivery settings to localStorage:', err);
+  }
+}
+
+const EMPTY_PENDING_OPS: PendingOpsState = {
+  upserts: { patients: [], funerals: [], donations: [], deliverySettings: false },
+  deletes: { patients: [], funerals: [], donations: [] },
+};
+
+export function getPendingOps(): PendingOpsState {
+  try {
+    const raw = localStorage.getItem(PENDING_OPS_KEY);
+    if (!raw) return structuredClone(EMPTY_PENDING_OPS);
+    const parsed = JSON.parse(raw);
+    return {
+      upserts: {
+        patients: Array.isArray(parsed?.upserts?.patients) ? parsed.upserts.patients : [],
+        funerals: Array.isArray(parsed?.upserts?.funerals) ? parsed.upserts.funerals : [],
+        donations: Array.isArray(parsed?.upserts?.donations) ? parsed.upserts.donations : [],
+        deliverySettings: Boolean(parsed?.upserts?.deliverySettings),
+      },
+      deletes: {
+        patients: Array.isArray(parsed?.deletes?.patients) ? parsed.deletes.patients : [],
+        funerals: Array.isArray(parsed?.deletes?.funerals) ? parsed.deletes.funerals : [],
+        donations: Array.isArray(parsed?.deletes?.donations) ? parsed.deletes.donations : [],
+      },
+    };
+  } catch {
+    return structuredClone(EMPTY_PENDING_OPS);
+  }
+}
+
+export function savePendingOps(ops: PendingOpsState): void {
+  try {
+    localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(ops));
+  } catch (err) {
+    console.error('Failed to save pendingOps:', err);
+  }
+}
+
+export function markPendingUpsert(kind: 'patients' | 'funerals' | 'donations', id: string): void {
+  const ops = getPendingOps();
+  if (!ops.upserts[kind].includes(id)) {
+    ops.upserts[kind].push(id);
+  }
+  ops.deletes[kind] = ops.deletes[kind].filter((x) => x !== id);
+  savePendingOps(ops);
+}
+
+export function clearPendingUpsert(kind: 'patients' | 'funerals' | 'donations', id: string): void {
+  const ops = getPendingOps();
+  ops.upserts[kind] = ops.upserts[kind].filter((x) => x !== id);
+  savePendingOps(ops);
+}
+
+export function markPendingDelete(kind: 'patients' | 'funerals' | 'donations', id: string): void {
+  const ops = getPendingOps();
+  if (!ops.deletes[kind].includes(id)) {
+    ops.deletes[kind].push(id);
+  }
+  ops.upserts[kind] = ops.upserts[kind].filter((x) => x !== id);
+  savePendingOps(ops);
+}
+
+export function clearPendingDelete(kind: 'patients' | 'funerals' | 'donations', id: string): void {
+  const ops = getPendingOps();
+  ops.deletes[kind] = ops.deletes[kind].filter((x) => x !== id);
+  savePendingOps(ops);
+}
+
+export function setPendingDeliverySettings(pending: boolean): void {
+  const ops = getPendingOps();
+  ops.upserts.deliverySettings = pending;
+  savePendingOps(ops);
+}
+
+export function clearAllPendingOps(): void {
+  savePendingOps(structuredClone(EMPTY_PENDING_OPS));
+}
+
+export interface KnownSyncedIds {
+  patients: string[];
+  funerals: string[];
+  donations: string[];
+}
+
+export function getKnownSyncedIds(): KnownSyncedIds {
+  try {
+    const raw = localStorage.getItem(KNOWN_SYNCED_KEY);
+    if (!raw) return { patients: [], funerals: [], donations: [] };
+    const parsed = JSON.parse(raw);
+    return {
+      patients: Array.isArray(parsed?.patients) ? parsed.patients : [],
+      funerals: Array.isArray(parsed?.funerals) ? parsed.funerals : [],
+      donations: Array.isArray(parsed?.donations) ? parsed.donations : [],
+    };
+  } catch {
+    return { patients: [], funerals: [], donations: [] };
+  }
+}
+
+export function saveKnownSyncedIds(ids: KnownSyncedIds): void {
+  try {
+    localStorage.setItem(KNOWN_SYNCED_KEY, JSON.stringify(ids));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function addKnownSyncedIds(
+  kind: 'patients' | 'funerals' | 'donations',
+  ids: string[]
+): void {
+  if (!ids.length) return;
+  const current = getKnownSyncedIds();
+  const merged = Array.from(new Set([...current[kind], ...ids]));
+  current[kind] = merged;
+  saveKnownSyncedIds(current);
+}
+
+export function replaceKnownSyncedIds(
+  kind: 'patients' | 'funerals' | 'donations',
+  ids: string[]
+): void {
+  const current = getKnownSyncedIds();
+  current[kind] = Array.from(new Set(ids));
+  saveKnownSyncedIds(current);
+}
+
+export function removeKnownSyncedId(
+  kind: 'patients' | 'funerals' | 'donations',
+  id: string
+): void {
+  const current = getKnownSyncedIds();
+  current[kind] = current[kind].filter((x) => x !== id);
+  saveKnownSyncedIds(current);
+}
+
+export function clearAllKnownSyncedIds(): void {
+  saveKnownSyncedIds({ patients: [], funerals: [], donations: [] });
+}
+
+export function getStoredAuthorizedEmails(): string[] {
+  try {
+    const raw = localStorage.getItem(AUTHORIZED_EMAILS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((e): e is string => typeof e === 'string' && e.includes('@'))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredAuthorizedEmails(emails: string[]): void {
+  try {
+    localStorage.setItem(AUTHORIZED_EMAILS_KEY, JSON.stringify(emails));
+  } catch {
+    /* ignore */
+  }
 }
 
