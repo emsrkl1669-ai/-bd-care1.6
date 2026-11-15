@@ -433,27 +433,44 @@ export const Header: React.FC<HeaderProps> = ({
                     <span>ล็อกอิน / Cloud</span>
                   </button>
                 </div>
-                {ADMIN_USERS.map((admin) => (
-                  <button
-                    key={admin.id}
-                    onClick={() => {
-                      setCurrentAdmin(admin);
-                      setIsAdminDropdownOpen(false);
-                    }}
-                    className={`w-full text-left px-3 py-2 flex items-start gap-2.5 hover:bg-blue-50 transition cursor-pointer ${
-                      currentAdmin.id === admin.id ? 'bg-blue-50/80 border-l-4 border-blue-600' : ''
-                    }`}
-                  >
-                    <div className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${admin.avatarColor}`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-bold text-xs text-slate-900">{admin.name}</div>
-                      <div className="text-[11px] text-blue-700 font-medium">{admin.roleTitle}</div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        User: {admin.username} • Pass: {admin.password}
+                {ADMIN_USERS.map((admin) => {
+                  const requiresPassword =
+                    admin.id === 'officer-gritpipat' && currentAdmin.id !== admin.id;
+                  return (
+                    <button
+                      key={admin.id}
+                      onClick={() => {
+                        if (requiresPassword) {
+                          setIsAdminDropdownOpen(false);
+                          setIsLoginModalOpen(true);
+                          return;
+                        }
+                        setCurrentAdmin(admin);
+                        setIsAdminDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 flex items-start gap-2.5 hover:bg-blue-50 transition cursor-pointer ${
+                        currentAdmin.id === admin.id ? 'bg-blue-50/80 border-l-4 border-blue-600' : ''
+                      }`}
+                    >
+                      <div className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${admin.avatarColor}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-xs text-slate-900 flex items-center justify-between gap-2">
+                          <span className="truncate">{admin.name}</span>
+                          {requiresPassword && (
+                            <span className="text-[9.5px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-semibold shrink-0 flex items-center gap-0.5">
+                              <Lock className="w-2.5 h-2.5" />
+                              ใช้รหัสผ่าน
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-blue-700 font-medium">{admin.roleTitle}</div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          Username: {admin.username}
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
 
                 <div className="border-t border-slate-100 pt-1.5 px-3 pb-1">
                   <button

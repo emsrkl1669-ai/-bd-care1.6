@@ -125,7 +125,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
   const handleQuickSelect = (admin: AdminUser) => {
     setUsername(admin.username);
-    setPassword(admin.password || '');
+    setPassword('');
     setErrorMsg('');
   };
 
@@ -593,7 +593,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="เช่น gritpipat, aleena, muanruethai, sataporn"
+                  placeholder="เช่น Kitphiphat03, aleena, muanruethai, sataporn"
                   required
                   className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                 />
@@ -658,9 +658,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   <div className="min-w-0 flex-1">
                     <div className="font-bold text-slate-900 truncate">{admin.name}</div>
                     <div className="text-[11px] text-blue-700 font-medium truncate">{admin.roleTitle}</div>
-                    <div className="text-[10.5px] font-mono text-slate-500 mt-1 flex items-center gap-2">
+                    <div className="text-[10.5px] font-mono text-slate-500 mt-1 flex items-center justify-between gap-2">
                       <span>User: <strong className="text-slate-800">{admin.username}</strong></span>
-                      <span>Pass: <strong className="text-slate-800">{admin.password}</strong></span>
+                      <span className="text-[10px] font-sans text-slate-400">กรอกรหัสผ่าน</span>
                     </div>
                   </div>
                 </button>

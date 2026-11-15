@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
-import { Cloud, CloudOff, AlertTriangle, RefreshCw, UserPlus, Check, Clock } from 'lucide-react';
+import { Cloud, CloudOff, AlertTriangle, RefreshCw, UserPlus, Check, Clock, ShieldCheck, LogOut, Lock } from 'lucide-react';
 import {
   ADMIN_USERS,
   AdminUser,
@@ -82,6 +82,7 @@ import {
   subscribeToPendingAccessRequests,
   approveAccessRequest,
   rejectAccessRequest,
+  verifyWorkspaceAccess,
 } from './services/firestoreSync';
 import {
   getStoredLanConfig,
@@ -109,7 +110,9 @@ function AppContent() {
   const [isCloudModalOpen, setIsCloudModalOpen] = useState<boolean>(false);
 
   // Firebase Auth & Sync states
+  const [authInitialized, setAuthInitialized] = useState<boolean>(false);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [accessVerified, setAccessVerified] = useState<'checking' | 'granted' | 'denied'>('checking');
   const [cloudStatus, setCloudStatus] = useState<'disconnected' | 'syncing' | 'synced' | 'error'>('disconnected');
   const [cloudErrorReason, setCloudErrorReason] = useState<'permission-denied' | 'network' | null>(null);
   const [initialCloudLoaded, setInitialCloudLoaded] = useState<boolean>(false);
@@ -168,7 +171,7 @@ function AppContent() {
   const [currentAdmin, setCurrentAdmin] = useState<AdminUser>(() => {
     const savedId = getStoredAdminId();
     const found = ADMIN_USERS.find((u) => u.id === savedId);
-    return found || ADMIN_USERS[0];
+    return found || ADMIN_USERS[1] || ADMIN_USERS[0];
   });
 
   // Track network status for offline support
@@ -196,6 +199,7 @@ function AppContent() {
     let cancelled = false;
 
     const unsubAuth = subscribeToAuth(async (user) => {
+      setAuthInitialized(true);
       setFirebaseUser(user);
       if (unsubCloud) {
         unsubCloud();
@@ -203,20 +207,37 @@ function AppContent() {
       }
 
       if (!user) {
+        setAccessVerified('denied');
         setCloudStatus('disconnected');
         setCloudErrorReason(null);
         setInitialCloudLoaded(false);
         return;
       }
 
+      setAccessVerified('checking');
       setCloudStatus('syncing');
       setCloudErrorReason(null);
       setInitialCloudLoaded(false);
 
       try {
         await ensureSuperAdminDirectory(user);
-        const teamEmails = await fetchWorkspaceAuthorizedEmails(user);
+        const access = await verifyWorkspaceAccess(user);
         if (cancelled) return;
+
+        if (!access.allowed) {
+          setAccessVerified('denied');
+          setCloudStatus('error');
+          setCloudErrorReason(access.reason || 'permission-denied');
+          setInitialCloudLoaded(true);
+          return;
+        }
+
+        setAccessVerified('granted');
+        if (isSuperAdminUser(user) && !getStoredAdminId()) {
+          setCurrentAdmin(ADMIN_USERS[0]);
+          saveStoredAdminId(ADMIN_USERS[0].id);
+        }
+        const teamEmails = access.emails;
         setAuthorizedEmails(teamEmails);
         authorizedEmailsRef.current = teamEmails;
 
@@ -361,6 +382,9 @@ function AppContent() {
           onError: (errDetail) => {
             setCloudStatus('error');
             setCloudErrorReason(errDetail.isPermissionError ? 'permission-denied' : 'network');
+            if (errDetail.isPermissionError) {
+              setAccessVerified('denied');
+            }
             setInitialCloudLoaded(true);
           },
         });
@@ -370,6 +394,7 @@ function AppContent() {
         const msg = err instanceof Error ? err.message : String(err);
         const isPerm =
           msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient');
+        setAccessVerified('denied');
         setCloudStatus('error');
         setCloudErrorReason(isPerm ? 'permission-denied' : 'network');
         setInitialCloudLoaded(true);
@@ -409,16 +434,16 @@ function AppContent() {
       autoReloadedApprovalRef.current = false;
       return;
     }
-    if (cloudErrorReason === 'permission-denied' && !autoReloadedApprovalRef.current) {
+    if ((cloudErrorReason === 'permission-denied' || accessVerified === 'denied') && !autoReloadedApprovalRef.current) {
       autoReloadedApprovalRef.current = true;
       showToast('ผู้ดูแลระบบอนุมัติสิทธิ์แล้ว กำลังโหลดข้อมูลทั้งหมดจาก Cloud...', 'success');
       setCloudRefreshNonce((n) => n + 1);
     }
-  }, [firebaseUser, myAccessRequest?.status, cloudErrorReason, showToast]);
+  }, [firebaseUser, myAccessRequest?.status, cloudErrorReason, accessVerified, showToast]);
 
   // Auto-flush queued offline operations whenever network connection returns
   useEffect(() => {
-    if (!isOnline || !firebaseUser) return;
+    if (!isOnline || !firebaseUser || accessVerified !== 'granted') return;
     const pending = getPendingOps();
     const hasPending =
       pending.upserts.patients.length > 0 ||
@@ -1261,6 +1286,218 @@ function AppContent() {
     setEditingPatient(patient);
     setCurrentTab('edit');
   };
+
+  // Mandatory Gate 1: Wait for Firebase Auth session check on initial page load
+  if (!authInitialized) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-lg p-8 max-w-md w-full text-center space-y-4">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-center">
+            <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold text-slate-900">BD-Care • โครงการใจถึงใจ</h1>
+            <p className="text-xs text-slate-600 mt-1">กำลังตรวจสอบสถานะการลงชื่อเข้าใช้งาน...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Mandatory Gate 2: Require Google Sign-In for EVERY user before exposing data
+  if (!firebaseUser) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50/40 to-slate-100 flex flex-col justify-between p-4">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="bg-white border border-slate-200 rounded-3xl shadow-xl max-w-md w-full overflow-hidden">
+            <div className="bg-slate-900 text-white px-6 py-6 text-center space-y-2">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-600/30 border border-blue-400/40 flex items-center justify-center">
+                <ShieldCheck className="w-8 h-8 text-blue-300" />
+              </div>
+              <h1 className="text-xl font-bold tracking-tight">ระบบฐานข้อมูล BD-Care</h1>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                โครงการใจถึงใจช่วยผู้ป่วยติดเตียงและยากไร้
+                <br />
+                มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)
+              </p>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-xs text-blue-950 space-y-1.5 leading-relaxed">
+                <div className="font-bold flex items-center gap-1.5 text-blue-900">
+                  <Lock className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span>ข้อกำหนดความปลอดภัยการเข้าใช้งานระบบ</span>
+                </div>
+                <p>
+                  ผู้ใช้งานทุกคนต้อง<strong>ลงชื่อเข้าใช้งานด้วยบัญชี Google</strong> และต้องได้รับการ<strong>เปิดอนุญาตสิทธิ์จากผู้ดูแลระบบ (Admin)</strong> ก่อนจึงจะสามารถดูและแก้ไขข้อมูลผู้ป่วยในระบบได้
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCloudSignIn}
+                className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition flex items-center justify-center gap-2.5 cursor-pointer"
+              >
+                <Cloud className="w-5 h-5" />
+                <span>เข้าสู่ระบบด้วยบัญชี Google</span>
+              </button>
+
+              <p className="text-[11px] text-center text-slate-500 leading-relaxed">
+                ผู้ดูแลระบบหลัก (Admin): นายกริชพิพัฒน์ สัลบทอง ({SUPER_ADMIN_EMAIL})
+                <br />
+                หากเป็นเจ้าหน้าที่ใหม่ สามารถกดส่งคำขอเปิดสิทธิ์ได้ทันทีหลังลงชื่อเข้าใช้
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <footer className="py-3 text-center text-[11px] text-slate-500">
+          57/1 ซอยท้ายบ้าน 17 (ซอยมูลนิธิ) ถนนท้ายบ้าน ตำบลปากน้ำ อำเภอเมืองสมุทรปราการ จังหวัดสมุทรปราการ 10270 โทร.02 175 8668, 02 175 8789
+        </footer>
+      </div>
+    );
+  }
+
+  // Mandatory Gate 3: Checking workspace authorization against Firestore server
+  if (accessVerified === 'checking') {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-lg p-8 max-w-md w-full text-center space-y-4">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-center">
+            <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-slate-900">กำลังตรวจสอบสิทธิ์การเข้าใช้งาน</h2>
+            <p className="text-xs text-slate-600 mt-1">
+              บัญชี: <span className="font-mono font-semibold text-slate-800">{firebaseUser.email}</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Mandatory Gate 4: Signed in with Google, waiting for Admin approval (or retry on network error)
+  if (accessVerified === 'denied') {
+    const isNetworkErr = cloudErrorReason === 'network';
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-100 via-amber-50/30 to-slate-100 flex flex-col justify-between p-4">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="bg-white border border-slate-200 rounded-3xl shadow-xl max-w-lg w-full overflow-hidden">
+            <div className={`px-6 py-5 text-white flex items-center justify-between ${isNetworkErr ? 'bg-slate-800' : 'bg-amber-700'}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-white/15 flex items-center justify-center">
+                  {isNetworkErr ? <CloudOff className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
+                </div>
+                <div>
+                  <h1 className="text-base font-bold">
+                    {isNetworkErr ? 'ไม่สามารถเชื่อมต่อฐานข้อมูลกลางได้' : 'รอผู้ดูแลระบบเปิดอนุญาตสิทธิ์'}
+                  </h1>
+                  <p className="text-xs text-white/85">BD-Care • มูลนิธิร่วมกุศลสมุทรปราการ</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs text-slate-500">ลงชื่อเข้าใช้ด้วยบัญชี Google</div>
+                  <div className="font-bold text-sm text-slate-900 truncate">
+                    {firebaseUser.displayName || 'ผู้ใช้งาน'}
+                  </div>
+                  <div className="text-xs font-mono text-slate-600 truncate">{firebaseUser.email}</div>
+                </div>
+                <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 ${
+                  myAccessRequest?.status === 'pending'
+                    ? 'bg-amber-100 text-amber-900'
+                    : isNetworkErr
+                    ? 'bg-slate-200 text-slate-800'
+                    : 'bg-red-100 text-red-800'
+                }`}>
+                  {myAccessRequest?.status === 'pending'
+                    ? 'รออนุมัติ'
+                    : isNetworkErr
+                    ? 'ออฟไลน์'
+                    : 'ยังไม่มีสิทธิ์'}
+                </span>
+              </div>
+
+              {isNetworkErr ? (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-700 leading-relaxed space-y-3">
+                  <p>ไม่สามารถตรวจสอบสิทธิ์กับฐานข้อมูลกลางในขณะนี้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่อีกครั้ง</p>
+                  <button
+                    type="button"
+                    onClick={() => setCloudRefreshNonce((n) => n + 1)}
+                    className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    <span>ตรวจสอบสิทธิ์อีกครั้ง</span>
+                  </button>
+                </div>
+              ) : myAccessRequest?.status === 'pending' ? (
+                <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-950 space-y-2 leading-relaxed">
+                  <div className="font-bold flex items-center gap-2 text-amber-900">
+                    <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>ส่งคำขอเปิดสิทธิ์เข้าใช้งานเรียบร้อยแล้ว</span>
+                  </div>
+                  <p>
+                    กรุณารอผู้ดูแลระบบ (นายกริชพิพัฒน์ สัลบทอง • <span className="font-mono">{SUPER_ADMIN_EMAIL}</span>) กดอนุมัติสิทธิ์ให้บัญชีของคุณ เมื่ออนุมัติแล้วระบบจะเปิดเข้าใช้งานให้อัตโนมัติทันที
+                  </p>
+                </div>
+              ) : (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-900 space-y-3 leading-relaxed">
+                  <div className="font-bold flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>บัญชี Google นี้ยังไม่ได้รับการเปิดอนุญาตสิทธิ์จากแอดมิน</span>
+                  </div>
+                  {myAccessRequest?.status === 'rejected' && (
+                    <p className="font-semibold text-red-700">
+                      คำขอก่อนหน้าถูกปฏิเสธ กรุณาติดต่อผู้ดูแลระบบหรือกดส่งคำขอใหม่อีกครั้ง
+                    </p>
+                  )}
+                  <p>
+                    กดปุ่มด้านล่างเพื่อส่งคำขอเปิดสิทธิ์ไปยังผู้ดูแลระบบ ({SUPER_ADMIN_EMAIL}) เพื่ออนุมัติให้บัญชีนี้เข้าดูและแก้ไขข้อมูล BD-Care
+                  </p>
+                  <button
+                    type="button"
+                    disabled={isSubmittingRequest}
+                    onClick={() => handleSubmitAccessRequest()}
+                    className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>{isSubmittingRequest ? 'กำลังส่งคำขอ...' : 'ส่งคำขอเปิดสิทธิ์ให้แอดมินอนุมัติ'}</span>
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setCloudRefreshNonce((n) => n + 1)}
+                  className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>รีเฟรชตรวจสอบสิทธิ์</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCloudSignOut}
+                  className="flex-1 py-2 px-3 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>เปลี่ยนบัญชี Google / ออก</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer className="py-3 text-center text-[11px] text-slate-500">
+          57/1 ซอยท้ายบ้าน 17 (ซอยมูลนิธิ) ถนนท้ายบ้าน ตำบลปากน้ำ อำเภอเมืองสมุทรปราการ จังหวัดสมุทรปราการ 10270 โทร.02 175 8668, 02 175 8789
+        </footer>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col selection:bg-blue-600 selection:text-white">

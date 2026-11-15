@@ -3,6 +3,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   onSnapshot,
   query,
@@ -1063,6 +1064,65 @@ export async function fetchWorkspaceAuthorizedEmails(user: User): Promise<string
     // Non-authorized or non-existent workspace config falls back gracefully
   }
   return normalizeAuthorizedEmails([], isSuperAdminUser(user) ? user : null);
+}
+
+export async function verifyWorkspaceAccess(user: User): Promise<{
+  allowed: boolean;
+  emails: string[];
+  reason?: 'permission-denied' | 'network';
+}> {
+  if (!user.emailVerified || !user.email) {
+    return { allowed: false, emails: [], reason: 'permission-denied' };
+  }
+  if (isSuperAdminUser(user)) {
+    const emails = await fetchWorkspaceAuthorizedEmails(user);
+    return { allowed: true, emails };
+  }
+
+  try {
+    const wsSnap = await getDocFromServer(doc(db, 'settings', 'workspace'));
+    if (wsSnap.exists()) {
+      const data = wsSnap.data();
+      const emails = normalizeAuthorizedEmails(
+        Array.isArray(data.authorizedEmails) ? data.authorizedEmails : []
+      );
+      saveStoredAuthorizedEmails(emails);
+      return { allowed: true, emails };
+    }
+    // Workspace doc doesn't exist yet; check explicit /admins/{uid}
+    const uid = sanitizeFirestoreId(user.uid, 'uid');
+    const adminSnap = await getDocFromServer(doc(db, 'admins', uid));
+    if (adminSnap.exists()) {
+      return { allowed: true, emails: normalizeAuthorizedEmails([], user) };
+    }
+    return { allowed: false, emails: [], reason: 'permission-denied' };
+  } catch (err: any) {
+    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    const isPerm = msg.includes('permission') || msg.includes('insufficient');
+    if (isPerm) {
+      return { allowed: false, emails: [], reason: 'permission-denied' };
+    }
+    // Offline fallback only if email was already locally cached from prior approval
+    const cached = getStoredAuthorizedEmailsFromLocal();
+    const emailLower = user.email.trim().toLowerCase();
+    if (cached.includes(emailLower)) {
+      return { allowed: true, emails: cached };
+    }
+    return { allowed: false, emails: [], reason: 'network' };
+  }
+}
+
+function getStoredAuthorizedEmailsFromLocal(): string[] {
+  try {
+    const raw = localStorage.getItem('bdcare_authorized_emails_v1');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.map((e) => String(e).trim().toLowerCase())
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 /**

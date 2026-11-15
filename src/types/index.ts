@@ -188,12 +188,12 @@ export interface PatientRecord {
 export const ADMIN_USERS: AdminUser[] = [
   {
     id: 'officer-gritpipat',
-    username: 'gritpipat',
-    password: 'password1',
+    username: 'Kitphiphat03',
+    password: 'Kit2532#',
     name: 'นายกริชพิพัฒน์ สลับทอง',
-    roleTitle: 'เจ้าหน้าที่รับคำร้อง (Admin)',
-    position: 'เจ้าหน้าที่ฝ่ายสังคมสงเคราะห์ / เจ้าหน้าที่รับคำร้อง',
-    responsibility: 'รับคำร้อง, ตรวจสอบเอกสารหลักฐาน, สำรวจข้อเท็จจริง และลงพื้นที่',
+    roleTitle: 'ผู้ดูแลระบบหลัก / เจ้าหน้าที่สังคมสงเคราะห์ (Admin)',
+    position: 'เจ้าหน้าที่ฝ่ายสังคมสงเคราะห์ / ผู้ดูแลระบบ',
+    responsibility: 'เปิดอนุญาตสิทธิ์ผู้ใช้งาน Google, รับคำร้อง, ตรวจสอบเอกสารหลักฐาน และลงพื้นที่',
     avatarColor: 'bg-emerald-600',
     role: 'officer',
   },

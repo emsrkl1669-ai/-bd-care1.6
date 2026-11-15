@@ -653,14 +653,15 @@ export const PatientList: React.FC<PatientListProps> = ({
         />
       )}
 
-      {/* A4 Patient Roster Report Modal */}
+      {/* A4 Landscape Patient Roster Report Modal (แบบ สค.04-R) */}
       {isPrintingRoster && (
         <PrintRosterModal
           title="รายงานบัญชีรายชื่อผู้ป่วยในโครงการใจถึงใจช่วยผู้ป่วยติดเตียงและยากไร้"
           subtitle={`สายส่งมอบ: ${selectedDistrict === 'all' ? 'ทุกอำเภอในจังหวัดสมุทรปราการ' : 'อำเภอ' + selectedDistrict} • สถานะ: ${statusTab === 'active' ? 'ในโครงการ' : statusTab === 'pending' ? 'รอพิจารณา' : 'ทั้งหมด'}`}
           documentCode="แบบ สค.04-R"
+          orientation="landscape"
+          indexColWidth="5%"
           items={filteredPatients}
-          itemsPerPage={9}
           onClose={() => setIsPrintingRoster(false)}
           summaryItems={[
             { label: 'ผู้ป่วยตามตัวกรอง', value: `${filteredPatients.length} ราย` },
@@ -673,68 +674,105 @@ export const PatientList: React.FC<PatientListProps> = ({
           columns={[
             {
               header: 'รหัสโครงการ',
-              width: 'w-24',
+              colWidth: '11%',
               align: 'center',
+              noWrap: true,
               render: (p) => (
-                <div className="font-mono font-bold text-blue-900 text-[10.5px]">{p.code}</div>
+                <div className="font-mono font-bold text-blue-900 text-[10.5px] whitespace-nowrap">
+                  {p.code}
+                </div>
               ),
             },
             {
               header: 'ชื่อ-สกุล / เลข ปชช.',
-              width: 'w-44',
+              colWidth: '20%',
               render: (p) => (
                 <div>
-                  <div className="font-bold text-slate-900 text-[11px] leading-tight">{p.title}{p.fullName}</div>
-                  <div className="font-mono text-[9.5px] text-slate-500">{formatNationalId(p.nationalId)}</div>
+                  <div className="font-bold text-slate-900 text-[11px] leading-snug">
+                    {p.title}{p.fullName}
+                  </div>
+                  <div className="font-mono text-[9.5px] text-slate-600 whitespace-nowrap mt-0.5">
+                    {formatNationalId(p.nationalId)}
+                  </div>
                 </div>
               ),
             },
             {
               header: 'ระดับเจ็บป่วย',
-              width: 'w-20',
+              colWidth: '10%',
               align: 'center',
+              noWrap: true,
               render: (p) => (
-                <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-800">
+                <span className="inline-block text-[9.5px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800 whitespace-nowrap">
                   {p.mobilityLevel === 'bedridden' ? 'ติดเตียง' : p.mobilityLevel === 'semi_bedridden' ? 'กึ่งติดเตียง' : 'พอเดินได้'}
                 </span>
               ),
             },
             {
-              header: 'ที่อยู่ (สมุทรปราการ)',
+              header: 'ที่อยู่ / พื้นที่',
+              colWidth: '20%',
               render: (p) => (
-                <div className="text-[10px] text-slate-800 leading-tight">
-                  เลขที่ {p.currentAddress.houseNo} {p.currentAddress.buildingVillage && `(${p.currentAddress.buildingVillage})`} ต.{p.currentAddress.subdistrict} อ.{p.currentAddress.district}
+                <div className="text-[10px] text-slate-800 leading-snug">
+                  <div>
+                    เลขที่ {p.currentAddress.houseNo}
+                    {p.currentAddress.buildingVillage ? ` (${p.currentAddress.buildingVillage})` : ''}
+                    {p.currentAddress.soi ? ` ซ.${p.currentAddress.soi}` : ''}
+                    {p.currentAddress.road ? ` ถ.${p.currentAddress.road}` : ''}
+                  </div>
+                  <div className="text-slate-600">
+                    ต.{p.currentAddress.subdistrict} อ.{p.currentAddress.district} จ.{p.currentAddress.province || 'สมุทรปราการ'}
+                  </div>
                 </div>
               ),
             },
             {
               header: 'สิ่งของสงเคราะห์ประจำเดือน',
-              width: 'w-52',
+              colWidth: '18%',
               render: (p) => (
-                <div className="text-[9.5px] text-slate-700 space-y-0.5">
-                  {p.helpCashEnabled && <span className="font-bold text-emerald-800 mr-1.5">• เงิน {formatCurrency(p.helpCashAmount)} บ.</span>}
-                  <span>• ข้าว {p.helpRicePacks || 0} ถุง</span>
-                  {p.helpWaterPacks > 0 && <span className="ml-1">• น้ำ {p.helpWaterPacks} พ. ({p.helpWaterSize === '600ML' ? '600M' : '1.5L'})</span>}
-                  {p.helpDiaperSize !== 'NONE' && <span className="ml-1 font-semibold text-blue-900">• แพมเพิส {p.helpDiaperSize} ({p.helpDiaperPacks} ห่อ)</span>}
+                <div className="text-[9.5px] text-slate-800 leading-snug flex flex-wrap gap-x-2 gap-y-0.5">
+                  {p.helpCashEnabled && (
+                    <span className="font-bold text-emerald-800 whitespace-nowrap">
+                      • เงิน {formatCurrency(p.helpCashAmount)} บ.
+                    </span>
+                  )}
+                  <span className="whitespace-nowrap">• ข้าว {p.helpRicePacks || 0} ถุง</span>
+                  {p.helpWaterPacks > 0 && (
+                    <span className="whitespace-nowrap">
+                      • น้ำ {p.helpWaterPacks} พ. ({p.helpWaterSize === '600ML' ? '600ML' : '1.5L'})
+                    </span>
+                  )}
+                  {p.helpDiaperSize !== 'NONE' && (
+                    <span className="font-semibold text-blue-900 whitespace-nowrap">
+                      • แพมเพิส {p.helpDiaperSize} ({p.helpDiaperPacks} ห่อ)
+                    </span>
+                  )}
                 </div>
               ),
             },
             {
               header: 'ผู้ดูแล / ติดต่อ',
-              width: 'w-28',
+              colWidth: '10%',
               render: (p) => (
-                <div className="text-[9.5px] text-slate-700 leading-tight">
-                  <div>{p.caregiverName || '-'}</div>
-                  {p.caregiverPhone && <div className="font-mono text-slate-500">{formatPhone(p.caregiverPhone)}</div>}
+                <div className="text-[9.5px] text-slate-800 leading-snug">
+                  <div className="font-medium">
+                    {p.caregiverName || '-'}
+                    {p.caregiverRelation ? ` (${p.caregiverRelation})` : ''}
+                  </div>
+                  {p.caregiverPhone && (
+                    <div className="font-mono text-slate-600 whitespace-nowrap mt-0.5">
+                      {formatPhone(p.caregiverPhone)}
+                    </div>
+                  )}
                 </div>
               ),
             },
             {
               header: 'รับเข้าโครงการ',
-              width: 'w-20',
+              colWidth: '6%',
               align: 'center',
+              noWrap: true,
               render: (p) => (
-                <div className="text-[9.5px] text-slate-600 font-mono">
+                <div className="text-[9.5px] text-slate-700 font-mono whitespace-nowrap">
                   {formatThaiDateShort(p.admissionDate)}
                 </div>
               ),
