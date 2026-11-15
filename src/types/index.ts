@@ -193,7 +193,7 @@ export const ADMIN_USERS: AdminUser[] = [
     name: 'นายกริชพิพัฒน์ สลับทอง',
     roleTitle: 'ผู้ดูแลระบบหลัก / เจ้าหน้าที่สังคมสงเคราะห์ (Admin)',
     position: 'เจ้าหน้าที่ฝ่ายสังคมสงเคราะห์ / ผู้ดูแลระบบ',
-    responsibility: 'เปิดอนุญาตสิทธิ์ผู้ใช้งาน Google, รับคำร้อง, ตรวจสอบเอกสารหลักฐาน และลงพื้นที่',
+    responsibility: 'เปิดอนุญาตสิทธิ์ผู้ใช้งาน (Username/Password), รับคำร้อง, ตรวจสอบเอกสารหลักฐาน และลงพื้นที่',
     avatarColor: 'bg-emerald-600',
     role: 'officer',
   },
@@ -521,13 +521,3 @@ export interface AccessRequestRecord {
   status: 'pending' | 'approved' | 'rejected';
   reviewedBy?: string;
 }
-
-export interface LanStorageConfig {
-  enabled: boolean;
-  serverUrl: string;
-  autoSync: boolean;
-  lastSyncedAt?: string;
-  lastRevision?: number;
-}
-
-

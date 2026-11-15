@@ -1,6 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
-import { Cloud, CloudOff, AlertTriangle, RefreshCw, UserPlus, Check, Clock, ShieldCheck, LogOut, Lock } from 'lucide-react';
+import {
+  Cloud,
+  CloudOff,
+  AlertTriangle,
+  RefreshCw,
+  UserPlus,
+  Check,
+  Clock,
+  ShieldCheck,
+  LogOut,
+  Lock,
+  User as UserIcon,
+  Key,
+  Eye,
+  EyeOff,
+  ExternalLink,
+} from 'lucide-react';
 import {
   ADMIN_USERS,
   AdminUser,
@@ -12,7 +28,6 @@ import {
   DonationDistributionRecord,
   DeliveryPlanSettings,
   AccessRequestRecord,
-  LanStorageConfig,
 } from './types';
 import {
   getStoredPatients,
@@ -54,12 +69,16 @@ import { UiFeedbackProvider, useUiFeedback } from './components/UiFeedback';
 import { formatThaiDate } from './utils/idCard';
 import { sanitizeFirestoreId } from './utils/image';
 import {
-  SUPER_ADMIN_EMAIL,
+  SUPER_ADMIN_USERNAME,
+  firebaseConfig,
   isSuperAdminUser,
+  isProviderDisabledError,
   getAuthSignInErrorMessage,
+  findAdminUserByAuthEmail,
+  authEmailToUsername,
   subscribeToAuth,
   testFirestoreConnection,
-  signInWithGoogle,
+  signInWithUsernamePassword,
   signOutFirebase,
 } from './firebase';
 import {
@@ -84,13 +103,6 @@ import {
   rejectAccessRequest,
   verifyWorkspaceAccess,
 } from './services/firestoreSync';
-import {
-  getStoredLanConfig,
-  saveStoredLanConfig,
-  normalizeLanServerUrl,
-  testLanConnection,
-  syncWithLanServer,
-} from './services/lanSync';
 
 function AppContent() {
   const { showToast, confirmDialog } = useUiFeedback();
@@ -122,16 +134,13 @@ function AppContent() {
   const [isSubmittingRequest, setIsSubmittingRequest] = useState<boolean>(false);
   const [processingReqUid, setProcessingReqUid] = useState<string | null>(null);
 
-  // Local LAN Server Storage (192.168.1.45) states
-  const [lanConfig, setLanConfig] = useState<LanStorageConfig>(() => getStoredLanConfig());
-  const [lanStatus, setLanStatus] = useState<'disabled' | 'syncing' | 'connected' | 'error'>(() =>
-    getStoredLanConfig().enabled ? 'syncing' : 'disabled'
-  );
-  const [lanStatusInfo, setLanStatusInfo] = useState<{
-    dataFilePath?: string;
-    errorMessage?: string;
-    counts?: { patients: number; funerals: number; donations: number };
-  } | null>(null);
+  // Username & Password login gate states
+  const [loginUsername, setLoginUsername] = useState<string>('');
+  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
+  const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [needsEmailProviderEnable, setNeedsEmailProviderEnable] = useState<boolean>(false);
 
   // Refs for latest state inside async callbacks
   const patientsRef = useRef<PatientRecord[]>(patients);
@@ -139,7 +148,6 @@ function AppContent() {
   const donationsRef = useRef<DonationDistributionRecord[]>(donations);
   const deliverySettingsRef = useRef<DeliveryPlanSettings>(deliverySettings);
   const authorizedEmailsRef = useRef<string[]>(authorizedEmails);
-  const lanConfigRef = useRef<LanStorageConfig>(lanConfig);
   const deliverySyncTimerRef = useRef<number | null>(null);
   const autoReloadedApprovalRef = useRef<boolean>(false);
 
@@ -162,10 +170,6 @@ function AppContent() {
   useEffect(() => {
     authorizedEmailsRef.current = authorizedEmails;
   }, [authorizedEmails]);
-
-  useEffect(() => {
-    lanConfigRef.current = lanConfig;
-  }, [lanConfig]);
 
   // Current logged in admin / staff role
   const [currentAdmin, setCurrentAdmin] = useState<AdminUser>(() => {
@@ -233,9 +237,24 @@ function AppContent() {
         }
 
         setAccessVerified('granted');
-        if (isSuperAdminUser(user) && !getStoredAdminId()) {
-          setCurrentAdmin(ADMIN_USERS[0]);
-          saveStoredAdminId(ADMIN_USERS[0].id);
+        const matchedAdmin = findAdminUserByAuthEmail(user.email);
+        if (matchedAdmin) {
+          setCurrentAdmin(matchedAdmin);
+          saveStoredAdminId(matchedAdmin.id);
+        } else {
+          const uname = authEmailToUsername(user.email);
+          const customAdmin: AdminUser = {
+            id: `staff-${uname}`,
+            username: uname,
+            name: user.displayName || uname,
+            roleTitle: 'เจ้าหน้าที่ BD-Care',
+            position: 'เจ้าหน้าที่ปฏิบัติงาน',
+            responsibility: 'บันทึกและดูแลข้อมูลผู้ป่วยในระบบ BD-Care',
+            avatarColor: 'bg-sky-600',
+            role: 'officer',
+          };
+          setCurrentAdmin(customAdmin);
+          saveStoredAdminId(customAdmin.id);
         }
         const teamEmails = access.emails;
         setAuthorizedEmails(teamEmails);
@@ -485,32 +504,59 @@ function AppContent() {
       .catch(() => {
         setCloudStatus('error');
       });
-  }, [isOnline, firebaseUser, showToast]);
+  }, [isOnline, firebaseUser, accessVerified, showToast]);
 
-  const handleCloudSignIn = useCallback(async () => {
-    try {
-      const user = await signInWithGoogle();
-      showToast(`เชื่อมต่อ Cloud สำเร็จ: ${user.email || user.displayName}`, 'success');
-    } catch (err: any) {
-      const msg = getAuthSignInErrorMessage(err);
-      if (msg) {
-        showToast(msg, 'error');
+  const handleUsernamePasswordLogin = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      const uname = loginUsername.trim();
+      if (!uname || !loginPassword) {
+        setLoginError('กรุณากรอกชื่อผู้ใช้งาน (Username) และรหัสผ่าน (Password) ให้ครบถ้วน');
+        return;
       }
-    }
-  }, [showToast]);
+      setIsSigningIn(true);
+      setLoginError(null);
+      setNeedsEmailProviderEnable(false);
+      try {
+        const user = await signInWithUsernamePassword(uname, loginPassword);
+        setLoginPassword('');
+        showToast(
+          `เข้าสู่ระบบสำเร็จ: ${user.displayName || authEmailToUsername(user.email)}`,
+          'success'
+        );
+      } catch (err: any) {
+        setNeedsEmailProviderEnable(isProviderDisabledError(err));
+        setLoginError(getAuthSignInErrorMessage(err));
+      } finally {
+        setIsSigningIn(false);
+      }
+    },
+    [loginUsername, loginPassword, showToast]
+  );
+
+  const handleSwitchUserAccount = useCallback(
+    async (username: string, password: string) => {
+      const user = await signInWithUsernamePassword(username, password);
+      showToast(
+        `สลับบัญชีผู้ใช้งานสำเร็จ: ${user.displayName || authEmailToUsername(user.email)}`,
+        'success'
+      );
+    },
+    [showToast]
+  );
 
   const handleCloudSignOut = useCallback(async () => {
     try {
       await signOutFirebase();
-      showToast('ออกจากระบบ Cloud แล้ว (ข้อมูลในเครื่องยังคงอยู่ครบถ้วน)', 'info');
+      showToast('ออกจากระบบแล้ว', 'info');
     } catch {
-      showToast('เกิดข้อผิดพลาดในการออกจากระบบ Cloud', 'error');
+      showToast('เกิดข้อผิดพลาดในการออกจากระบบ', 'error');
     }
   }, [showToast]);
 
   const handleManualCloudSync = useCallback(async () => {
     if (!firebaseUser) {
-      await handleCloudSignIn();
+      setIsCloudModalOpen(true);
       return;
     }
     setCloudStatus('syncing');
@@ -551,12 +597,12 @@ function AppContent() {
       setCloudErrorReason(isPerm ? 'permission-denied' : 'network');
       showToast(
         isPerm
-          ? 'บัญชี Google นี้ยังไม่ได้รับสิทธิ์เข้าถึงข้อมูลกลาง กรุณาใช้บัญชีหลักหรือกดส่งคำขอสิทธิ์'
+          ? 'บัญชีผู้ใช้งานนี้ยังไม่ได้รับสิทธิ์เข้าถึงข้อมูลกลาง กรุณาใช้บัญชี Admin หลักหรือกดส่งคำขอสิทธิ์'
           : 'ไม่สามารถซิงค์ข้อมูลขึ้น Cloud ได้ในขณะนี้ ข้อมูลยังคงถูกบันทึกไว้ในเครื่อง',
         isPerm ? 'error' : 'warning'
       );
     }
-  }, [firebaseUser, handleCloudSignIn, showToast]);
+  }, [firebaseUser, showToast]);
 
   const handleSaveAuthorizedEmails = useCallback(
     async (nextEmails: string[]) => {
@@ -623,155 +669,7 @@ function AppContent() {
     [firebaseUser, showToast]
   );
 
-  // Sync local dataset bidirectionally with LAN server (e.g. 192.168.1.45)
-  const syncNowWithLanServer = useCallback(
-    async (
-      overrideConfig?: LanStorageConfig,
-      explicitPayload?: {
-        patients?: PatientRecord[];
-        funerals?: FuneralAssistanceRecord[];
-        donations?: DonationDistributionRecord[];
-        deliverySettings?: DeliveryPlanSettings;
-        deletedFunerals?: string[];
-        deletedDonations?: string[];
-      }
-    ): Promise<boolean> => {
-      const cfg = overrideConfig || lanConfigRef.current;
-      if (!cfg.enabled) {
-        setLanStatus('disabled');
-        setLanStatusInfo(null);
-        return false;
-      }
-
-      setLanStatus('syncing');
-      const pending = getPendingOps();
-      const payload = {
-        patients: explicitPayload?.patients ?? patientsRef.current,
-        funerals: explicitPayload?.funerals ?? funeralsRef.current,
-        donations: explicitPayload?.donations ?? donationsRef.current,
-        deliverySettings: explicitPayload?.deliverySettings ?? deliverySettingsRef.current,
-        deletedFunerals: explicitPayload?.deletedFunerals ?? pending.deletes.funerals,
-        deletedDonations: explicitPayload?.deletedDonations ?? pending.deletes.donations,
-      };
-
-      try {
-        const res = await syncWithLanServer(cfg.serverUrl, payload);
-        setPatients(res.patients);
-        patientsRef.current = res.patients;
-        saveStoredPatients(res.patients);
-
-        setFunerals(res.funerals);
-        funeralsRef.current = res.funerals;
-        saveStoredFunerals(res.funerals);
-
-        setDonations(res.donations);
-        donationsRef.current = res.donations;
-        saveStoredDonations(res.donations);
-
-        if (res.deliverySettings) {
-          setDeliverySettings(res.deliverySettings);
-          deliverySettingsRef.current = res.deliverySettings;
-          saveStoredDeliverySettings(res.deliverySettings);
-        }
-
-        const updatedCfg = saveStoredLanConfig({
-          ...cfg,
-          lastSyncedAt: res.updatedAt || new Date().toISOString(),
-          lastRevision: res.revision,
-        });
-        setLanConfig(updatedCfg);
-        lanConfigRef.current = updatedCfg;
-        setLanStatus('connected');
-        setLanStatusInfo({
-          dataFilePath: res.dataFilePath,
-          counts: {
-            patients: res.patients.length,
-            funerals: res.funerals.length,
-            donations: res.donations.length,
-          },
-        });
-        return true;
-      } catch {
-        const probe = await testLanConnection(cfg.serverUrl);
-        setLanStatus('error');
-        setLanStatusInfo({
-          errorMessage: probe.errorMessage || `ไม่สามารถเชื่อมต่อ ${cfg.serverUrl} ได้`,
-        });
-        return false;
-      }
-    },
-    []
-  );
-
-  // Initial sync & 5-second background LAN revision polling when LAN storage is enabled
-  useEffect(() => {
-    if (!lanConfig.enabled) {
-      setLanStatus('disabled');
-      setLanStatusInfo(null);
-      return;
-    }
-
-    let cancelled = false;
-    syncNowWithLanServer(lanConfig);
-
-    const interval = window.setInterval(async () => {
-      if (cancelled || !lanConfigRef.current.enabled) return;
-      const probe = await testLanConnection(lanConfigRef.current.serverUrl);
-      if (cancelled) return;
-      if (!probe.ok) {
-        setLanStatus('error');
-        setLanStatusInfo({ errorMessage: probe.errorMessage });
-        return;
-      }
-      if (probe.revision !== lanConfigRef.current.lastRevision) {
-        await syncNowWithLanServer(lanConfigRef.current);
-      } else {
-        setLanStatus('connected');
-        setLanStatusInfo({
-          dataFilePath: probe.dataFilePath,
-          counts: probe.counts,
-        });
-      }
-    }, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [lanConfig.enabled, lanConfig.serverUrl, syncNowWithLanServer]);
-
-  const handleSaveAndSyncLan = useCallback(
-    async (serverUrl: string, enabled: boolean) => {
-      const normalized = saveStoredLanConfig({
-        ...lanConfigRef.current,
-        serverUrl: normalizeLanServerUrl(serverUrl),
-        enabled,
-        autoSync: true,
-      });
-      setLanConfig(normalized);
-      lanConfigRef.current = normalized;
-
-      if (!enabled) {
-        setLanStatus('disabled');
-        setLanStatusInfo(null);
-        showToast('ปิดการซิงค์เซิร์ฟเวอร์ LAN ชั่วคราวแล้ว', 'info');
-        return;
-      }
-
-      const ok = await syncNowWithLanServer(normalized);
-      if (ok) {
-        showToast(`เชื่อมต่อและซิงค์ข้อมูลกับ ${normalized.serverUrl} สำเร็จแล้ว`, 'success');
-      } else {
-        showToast(
-          `ยังไม่พบเซิร์ฟเวอร์เก็บข้อมูลที่ ${normalized.serverUrl} กรุณาตรวจสอบคำแนะนำในหน้าต่างตั้งค่า`,
-          'warning'
-        );
-      }
-    },
-    [showToast, syncNowWithLanServer]
-  );
-
-  // Update Delivery Plan shared settings (immediate local + debounced Cloud & LAN save)
+  // Update Delivery Plan shared settings (immediate local + debounced Cloud save)
   const handleUpdateDeliverySettings = useCallback(
     (partial: Partial<DeliveryPlanSettings>) => {
       const nextSettings: DeliveryPlanSettings = {
@@ -791,9 +689,6 @@ function AppContent() {
         setCloudStatus('syncing');
       }
       deliverySyncTimerRef.current = window.setTimeout(() => {
-        if (lanConfigRef.current.enabled) {
-          syncNowWithLanServer(lanConfigRef.current, { deliverySettings: deliverySettingsRef.current });
-        }
         if (!firebaseUser) return;
         saveDeliveryPlanSettingsToCloud(
           deliverySettingsRef.current,
@@ -810,7 +705,7 @@ function AppContent() {
           });
       }, 450);
     },
-    [firebaseUser, syncNowWithLanServer]
+    [firebaseUser]
   );
 
   // Save current admin change
@@ -838,10 +733,6 @@ function AppContent() {
     setPatients(updatedPatients);
     patientsRef.current = updatedPatients;
     saveStoredPatients(updatedPatients);
-
-    if (lanConfigRef.current.enabled) {
-      syncNowWithLanServer(lanConfigRef.current, { patients: updatedPatients });
-    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -901,10 +792,6 @@ function AppContent() {
     patientsRef.current = updatedPatients;
     saveStoredPatients(updatedPatients);
 
-    if (lanConfigRef.current.enabled) {
-      syncNowWithLanServer(lanConfigRef.current, { patients: updatedPatients });
-    }
-
     if (firebaseUser) {
       setCloudStatus('syncing');
       savePatientToCloud(modifiedPatient, firebaseUser, authorizedEmailsRef.current)
@@ -956,10 +843,6 @@ function AppContent() {
     patientsRef.current = updatedPatients;
     saveStoredPatients(updatedPatients);
 
-    if (lanConfigRef.current.enabled) {
-      syncNowWithLanServer(lanConfigRef.current, { patients: updatedPatients });
-    }
-
     if (firebaseUser) {
       setCloudStatus('syncing');
       savePatientToCloud(modifiedPatient, firebaseUser, authorizedEmailsRef.current)
@@ -1000,10 +883,6 @@ function AppContent() {
     patientsRef.current = updatedPatients;
     saveStoredPatients(updatedPatients);
 
-    if (lanConfigRef.current.enabled) {
-      syncNowWithLanServer(lanConfigRef.current, { patients: updatedPatients });
-    }
-
     if (firebaseUser) {
       setCloudStatus('syncing');
       saveDeliveryToCloud(modifiedPatient, delivery, firebaseUser, authorizedEmailsRef.current)
@@ -1043,10 +922,6 @@ function AppContent() {
     funeralsRef.current = updatedFunerals;
     saveStoredFunerals(updatedFunerals);
 
-    if (lanConfigRef.current.enabled) {
-      syncNowWithLanServer(lanConfigRef.current, { funerals: updatedFunerals });
-    }
-
     if (firebaseUser) {
       setCloudStatus('syncing');
       saveFuneralToCloud(normalized, firebaseUser, authorizedEmailsRef.current)
@@ -1076,14 +951,6 @@ function AppContent() {
     setFunerals(updatedFunerals);
     funeralsRef.current = updatedFunerals;
     saveStoredFunerals(updatedFunerals);
-
-    if (lanConfigRef.current.enabled) {
-      const pending = getPendingOps();
-      syncNowWithLanServer(lanConfigRef.current, {
-        funerals: updatedFunerals,
-        deletedFunerals: Array.from(new Set([...pending.deletes.funerals, id, safeId])),
-      });
-    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -1126,10 +993,6 @@ function AppContent() {
     donationsRef.current = updatedDonations;
     saveStoredDonations(updatedDonations);
 
-    if (lanConfigRef.current.enabled) {
-      syncNowWithLanServer(lanConfigRef.current, { donations: updatedDonations });
-    }
-
     if (firebaseUser) {
       setCloudStatus('syncing');
       saveDonationToCloud(normalized, firebaseUser, authorizedEmailsRef.current)
@@ -1159,14 +1022,6 @@ function AppContent() {
     setDonations(updatedDonations);
     donationsRef.current = updatedDonations;
     saveStoredDonations(updatedDonations);
-
-    if (lanConfigRef.current.enabled) {
-      const pending = getPendingOps();
-      syncNowWithLanServer(lanConfigRef.current, {
-        donations: updatedDonations,
-        deletedDonations: Array.from(new Set([...pending.deletes.donations, id, safeId])),
-      });
-    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -1220,14 +1075,6 @@ function AppContent() {
     }
 
     setCurrentTab('list');
-
-    if (lanConfigRef.current.enabled) {
-      await syncNowWithLanServer(lanConfigRef.current, {
-        patients: nextPatients,
-        funerals: nextFunerals,
-        donations: nextDonations,
-      });
-    }
 
     if (firebaseUser) {
       setCloudStatus('syncing');
@@ -1304,7 +1151,7 @@ function AppContent() {
     );
   }
 
-  // Mandatory Gate 2: Require Google Sign-In for EVERY user before exposing data
+  // Mandatory Gate 2: Require Username & Password Sign-In for EVERY user before exposing data
   if (!firebaseUser) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50/40 to-slate-100 flex flex-col justify-between p-4">
@@ -1320,34 +1167,118 @@ function AppContent() {
                 <br />
                 มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)
               </p>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-[11px] text-emerald-300 font-mono">
+                <Cloud className="w-3.5 h-3.5 shrink-0" />
+                <span>Firebase: {firebaseConfig.projectId}</span>
+              </div>
             </div>
 
-            <div className="p-6 space-y-5">
-              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-xs text-blue-950 space-y-1.5 leading-relaxed">
+            <form onSubmit={handleUsernamePasswordLogin} className="p-6 space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3.5 text-xs text-blue-950 space-y-1 leading-relaxed">
                 <div className="font-bold flex items-center gap-1.5 text-blue-900">
                   <Lock className="w-4 h-4 text-blue-600 shrink-0" />
-                  <span>ข้อกำหนดความปลอดภัยการเข้าใช้งานระบบ</span>
+                  <span>เข้าสู่ระบบด้วย Username และ Password เท่านั้น</span>
                 </div>
                 <p>
-                  ผู้ใช้งานทุกคนต้อง<strong>ลงชื่อเข้าใช้งานด้วยบัญชี Google</strong> และต้องได้รับการ<strong>เปิดอนุญาตสิทธิ์จากผู้ดูแลระบบ (Admin)</strong> ก่อนจึงจะสามารถดูและแก้ไขข้อมูลผู้ป่วยในระบบได้
+                  ผู้ใช้งานทุกคนต้องลงชื่อเข้าใช้ด้วยชื่อผู้ใช้งานและรหัสผ่านที่ได้รับอนุญาตจากผู้ดูแลระบบ (Admin) ก่อนเข้าถึงข้อมูล
                 </p>
               </div>
 
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    ชื่อผู้ใช้งาน (Username)
+                  </label>
+                  <div className="relative">
+                    <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={loginUsername}
+                      onChange={(e) => setLoginUsername(e.target.value)}
+                      autoComplete="username"
+                      placeholder="เช่น Kitphiphat03 หรือชื่อผู้ใช้เจ้าหน้าที่"
+                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    รหัสผ่าน (Password)
+                  </label>
+                  <div className="relative">
+                    <Key className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type={showLoginPassword ? 'text' : 'password'}
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      autoComplete="current-password"
+                      placeholder="กรอกรหัสผ่าน"
+                      className="w-full pl-9 pr-10 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword((prev) => !prev)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                      aria-label={showLoginPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
+                    >
+                      {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {loginError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 flex items-start gap-2 leading-relaxed">
+                  <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+
+              {needsEmailProviderEnable && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 text-xs text-amber-950 space-y-2 leading-relaxed">
+                  <div className="font-bold text-amber-900">
+                    ขั้นตอนเปิดใช้งาน Login ด้วย Username/Password ใน Firebase Console
+                  </div>
+                  <p>
+                    เข้าไปที่โปรเจกต์ <strong>{firebaseConfig.projectId}</strong> &rarr; <strong>Authentication</strong> &rarr; <strong>Sign-in method</strong> &rarr; กดเปิด <strong>Email/Password</strong> แล้วกด Save จากนั้นลองเข้าสู่ระบบอีกครั้ง
+                  </p>
+                  <a
+                    href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 font-bold text-blue-700 hover:text-blue-900 underline"
+                  >
+                    <span>เปิดหน้าตั้งค่า Authentication ใน Firebase Console</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
+
               <button
-                type="button"
-                onClick={handleCloudSignIn}
-                className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition flex items-center justify-center gap-2.5 cursor-pointer"
+                type="submit"
+                disabled={isSigningIn}
+                className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-60 text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
               >
-                <Cloud className="w-5 h-5" />
-                <span>เข้าสู่ระบบด้วยบัญชี Google</span>
+                {isSigningIn ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>กำลังตรวจสอบและเข้าสู่ระบบ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-4 h-4" />
+                    <span>เข้าสู่ระบบด้วย Username & Password</span>
+                  </>
+                )}
               </button>
 
               <p className="text-[11px] text-center text-slate-500 leading-relaxed">
-                ผู้ดูแลระบบหลัก (Admin): นายกริชพิพัฒน์ สัลบทอง ({SUPER_ADMIN_EMAIL})
+                ผู้ดูแลระบบหลัก (Admin): นายกริชพิพัฒน์ สัลบทอง (Username: <span className="font-mono font-semibold text-slate-700">{SUPER_ADMIN_USERNAME}</span>)
                 <br />
-                หากเป็นเจ้าหน้าที่ใหม่ สามารถกดส่งคำขอเปิดสิทธิ์ได้ทันทีหลังลงชื่อเข้าใช้
+                เจ้าหน้าที่ใหม่สามารถขอ Username และ Password ได้จากผู้ดูแลระบบหลัก
               </p>
-            </div>
+            </form>
           </div>
         </div>
 
@@ -1369,7 +1300,10 @@ function AppContent() {
           <div>
             <h2 className="text-base font-bold text-slate-900">กำลังตรวจสอบสิทธิ์การเข้าใช้งาน</h2>
             <p className="text-xs text-slate-600 mt-1">
-              บัญชี: <span className="font-mono font-semibold text-slate-800">{firebaseUser.email}</span>
+              บัญชีผู้ใช้งาน:{' '}
+              <span className="font-mono font-semibold text-slate-800">
+                @{authEmailToUsername(firebaseUser.email)}
+              </span>
             </p>
           </div>
         </div>
@@ -1377,9 +1311,10 @@ function AppContent() {
     );
   }
 
-  // Mandatory Gate 4: Signed in with Google, waiting for Admin approval (or retry on network error)
+  // Mandatory Gate 4: Signed in, waiting for Admin approval (or retry on network error)
   if (accessVerified === 'denied') {
     const isNetworkErr = cloudErrorReason === 'network';
+    const currentUname = authEmailToUsername(firebaseUser.email);
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-100 via-amber-50/30 to-slate-100 flex flex-col justify-between p-4">
         <div className="flex-1 flex items-center justify-center">
@@ -1401,11 +1336,13 @@ function AppContent() {
             <div className="p-6 space-y-4">
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-xs text-slate-500">ลงชื่อเข้าใช้ด้วยบัญชี Google</div>
+                  <div className="text-xs text-slate-500">ลงชื่อเข้าใช้ด้วย Username</div>
                   <div className="font-bold text-sm text-slate-900 truncate">
-                    {firebaseUser.displayName || 'ผู้ใช้งาน'}
+                    {firebaseUser.displayName || currentUname || 'ผู้ใช้งาน'}
                   </div>
-                  <div className="text-xs font-mono text-slate-600 truncate">{firebaseUser.email}</div>
+                  <div className="text-xs font-mono text-slate-600 truncate">
+                    @{currentUname} ({firebaseUser.email})
+                  </div>
                 </div>
                 <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 ${
                   myAccessRequest?.status === 'pending'
@@ -1441,14 +1378,14 @@ function AppContent() {
                     <span>ส่งคำขอเปิดสิทธิ์เข้าใช้งานเรียบร้อยแล้ว</span>
                   </div>
                   <p>
-                    กรุณารอผู้ดูแลระบบ (นายกริชพิพัฒน์ สัลบทอง • <span className="font-mono">{SUPER_ADMIN_EMAIL}</span>) กดอนุมัติสิทธิ์ให้บัญชีของคุณ เมื่ออนุมัติแล้วระบบจะเปิดเข้าใช้งานให้อัตโนมัติทันที
+                    กรุณารอผู้ดูแลระบบ (นายกริชพิพัฒน์ สัลบทอง • Username: <span className="font-mono font-semibold">{SUPER_ADMIN_USERNAME}</span>) กดอนุมัติสิทธิ์ให้บัญชีของคุณ เมื่ออนุมัติแล้วระบบจะเปิดเข้าใช้งานให้อัตโนมัติทันที
                   </p>
                 </div>
               ) : (
                 <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-900 space-y-3 leading-relaxed">
                   <div className="font-bold flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
-                    <span>บัญชี Google นี้ยังไม่ได้รับการเปิดอนุญาตสิทธิ์จากแอดมิน</span>
+                    <span>บัญชีผู้ใช้งานนี้ยังไม่ได้รับการเปิดอนุญาตสิทธิ์จากแอดมิน</span>
                   </div>
                   {myAccessRequest?.status === 'rejected' && (
                     <p className="font-semibold text-red-700">
@@ -1456,7 +1393,7 @@ function AppContent() {
                     </p>
                   )}
                   <p>
-                    กดปุ่มด้านล่างเพื่อส่งคำขอเปิดสิทธิ์ไปยังผู้ดูแลระบบ ({SUPER_ADMIN_EMAIL}) เพื่ออนุมัติให้บัญชีนี้เข้าดูและแก้ไขข้อมูล BD-Care
+                    กดปุ่มด้านล่างเพื่อส่งคำขอเปิดสิทธิ์ไปยังผู้ดูแลระบบ (Username: <span className="font-mono font-semibold">{SUPER_ADMIN_USERNAME}</span>) เพื่ออนุมัติให้บัญชีนี้เข้าดูและแก้ไขข้อมูล BD-Care
                   </p>
                   <button
                     type="button"
@@ -1485,7 +1422,7 @@ function AppContent() {
                   className="flex-1 py-2 px-3 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>เปลี่ยนบัญชี Google / ออก</span>
+                  <span>เปลี่ยนบัญชีผู้ใช้งาน / ออกจากระบบ</span>
                 </button>
               </div>
             </div>
@@ -1523,7 +1460,7 @@ function AppContent() {
         cloudErrorReason={cloudErrorReason}
         authorizedEmails={authorizedEmails}
         onSaveAuthorizedEmails={handleSaveAuthorizedEmails}
-        onCloudSignIn={handleCloudSignIn}
+        onSwitchUserAccount={handleSwitchUserAccount}
         onCloudSignOut={handleCloudSignOut}
         onManualCloudSync={handleManualCloudSync}
         externalLoginOpen={isCloudModalOpen}
@@ -1534,43 +1471,10 @@ function AppContent() {
         pendingAccessRequests={pendingAccessRequests}
         onApproveAccessRequest={handleApproveAccessRequest}
         onRejectAccessRequest={handleRejectAccessRequest}
-        lanConfig={lanConfig}
-        lanStatus={lanStatus}
-        lanStatusInfo={lanStatusInfo}
-        onSaveAndSyncLan={handleSaveAndSyncLan}
       />
 
       {/* Main Content Areas */}
       <main className="flex-1 pb-16">
-        {/* Cross-Device Cloud Sync Onboarding & Diagnostic Banners */}
-        {!firebaseUser && lanStatus !== 'connected' && (
-          <div className="no-print max-w-7xl mx-auto px-3 sm:px-4 pt-4">
-            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-              <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
-                <div className="p-2 bg-amber-100 text-amber-700 rounded-xl shrink-0">
-                  <CloudOff className="w-5 h-5" />
-                </div>
-                <div className="text-xs text-amber-950">
-                  <div className="font-bold text-sm">
-                    เครื่องนี้ยังไม่ได้เชื่อมต่อฐานข้อมูลกลาง Cloud Firestore
-                  </div>
-                  <p className="text-amber-800 mt-0.5 leading-relaxed">
-                    หากต้องการให้ข้อมูลผู้ป่วย คำร้องเผาศพ แผนส่งมอบ และสิ่งของบริจาคแสดงผลตรงกันและแก้ไขร่วมกันได้ทุกเครื่อง กรุณาเชื่อมต่อด้วยบัญชี Google ({SUPER_ADMIN_EMAIL} หรือบัญชีทีมงาน และสามารถกดส่งคำขอสิทธิ์จากอุปกรณ์นี้ได้ทันที)
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleCloudSignIn}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
-              >
-                <Cloud className="w-4 h-4" />
-                <span>เชื่อมต่อ Google เพื่อซิงค์ข้อมูลข้ามเครื่อง</span>
-              </button>
-            </div>
-          </div>
-        )}
-
         {firebaseUser && cloudErrorReason === 'permission-denied' && (
           <div className="no-print max-w-7xl mx-auto px-3 sm:px-4 pt-4">
             <div className="bg-red-50 border border-red-300 rounded-2xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
@@ -1580,16 +1484,16 @@ function AppContent() {
                 </div>
                 <div className="text-xs text-red-950">
                   <div className="font-bold text-sm">
-                    บัญชี {firebaseUser.email} ยังไม่ได้รับสิทธิ์เข้าถึงฐานข้อมูลกลาง
+                    บัญชี @{authEmailToUsername(firebaseUser.email)} ({firebaseUser.email}) ยังไม่ได้รับสิทธิ์เข้าถึงฐานข้อมูลกลาง
                   </div>
                   {myAccessRequest?.status === 'pending' ? (
                     <p className="text-amber-800 font-semibold mt-0.5 flex items-center gap-1.5">
                       <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span>ส่งคำขอสิทธิ์แล้ว กำลังรอผู้ดูแลระบบ ({SUPER_ADMIN_EMAIL}) อนุมัติ — หน้าจอจะโหลดข้อมูลทั้งหมดให้อัตโนมัติทันที</span>
+                      <span>ส่งคำขอสิทธิ์แล้ว กำลังรอผู้ดูแลระบบ ({SUPER_ADMIN_USERNAME}) อนุมัติ — หน้าจอจะโหลดข้อมูลทั้งหมดให้อัตโนมัติทันที</span>
                     </p>
                   ) : (
                     <p className="text-red-800 mt-0.5 leading-relaxed">
-                      กดปุ่ม "ส่งคำขอสิทธิ์เข้าใช้งาน" เพื่อให้ผู้ดูแลระบบอนุมัติได้ทันที หรือสลับไปใช้บัญชีหลัก ({SUPER_ADMIN_EMAIL})
+                      กดปุ่ม "ส่งคำขอสิทธิ์เข้าใช้งาน" เพื่อให้ผู้ดูแลระบบอนุมัติได้ทันที หรือสลับไปใช้บัญชีหลัก ({SUPER_ADMIN_USERNAME})
                     </p>
                   )}
                 </div>
@@ -1613,7 +1517,7 @@ function AppContent() {
                   onClick={() => setIsCloudModalOpen(true)}
                   className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
                 >
-                  สลับบัญชีหลัก
+                  สลับบัญชีผู้ใช้งาน
                 </button>
               </div>
             </div>

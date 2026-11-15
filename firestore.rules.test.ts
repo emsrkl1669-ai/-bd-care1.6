@@ -25,10 +25,10 @@ export const DIRTY_DOZEN_TESTS: SecurityTestCase[] = [
   },
   {
     id: 2,
-    name: 'Unverified Email Admin Spoof',
+    name: 'Unauthorized Spoof Against Admin Allowlist',
     collectionPath: 'patients/pt_1',
     operation: 'create',
-    auth: { uid: 'attacker_1', email: 'emsrkl1669@gmail.com', email_verified: false },
+    auth: { uid: 'attacker_1', email: 'attacker@example.com', email_verified: false },
     payload: { id: 'pt_1', ownerUid: 'attacker_1', code: 'BDC-69-001', fullName: 'Test' },
     expectedResult: 'PERMISSION_DENIED',
   },

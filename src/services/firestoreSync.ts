@@ -20,8 +20,11 @@ import {
   OperationType,
   handleFirestoreError,
   isSuperAdminUser,
+  usernameToAuthEmail,
+  findAdminUserByAuthEmail,
 } from '../firebase';
 import {
+  ADMIN_USERS,
   PatientRecord,
   MonthlyDelivery,
   PatientPhoto,
@@ -109,18 +112,25 @@ function emailsNeedBackfill(existingEmails: unknown, targetEmails: string[]): bo
   return targetEmails.some((e) => !existingSet.has(e.trim().toLowerCase()));
 }
 
+export const DEFAULT_STAFF_EMAILS = ADMIN_USERS.map((u) =>
+  usernameToAuthEmail(u.username)
+);
+
 export function normalizeAuthorizedEmails(
   emails: string[] = [],
   currentUser?: User | null
 ): string[] {
-  const set = new Set<string>([SUPER_ADMIN_EMAIL.toLowerCase()]);
+  const set = new Set<string>([
+    SUPER_ADMIN_EMAIL.toLowerCase(),
+    ...DEFAULT_STAFF_EMAILS,
+  ]);
   for (const e of emails) {
     const clean = (e || '').trim().toLowerCase();
     if (clean && clean.includes('@') && clean.length <= 200) {
       set.add(clean);
     }
   }
-  if (currentUser?.email && currentUser.emailVerified) {
+  if (currentUser?.email) {
     const uEmail = currentUser.email.trim().toLowerCase();
     if (uEmail.includes('@')) set.add(uEmail);
   }
@@ -1071,10 +1081,12 @@ export async function verifyWorkspaceAccess(user: User): Promise<{
   emails: string[];
   reason?: 'permission-denied' | 'network';
 }> {
-  if (!user.emailVerified || !user.email) {
+  if (!user.email) {
     return { allowed: false, emails: [], reason: 'permission-denied' };
   }
-  if (isSuperAdminUser(user)) {
+  const emailLower = user.email.trim().toLowerCase();
+
+  if (isSuperAdminUser(user) || Boolean(findAdminUserByAuthEmail(emailLower))) {
     const emails = await fetchWorkspaceAuthorizedEmails(user);
     return { allowed: true, emails };
   }
@@ -1086,10 +1098,11 @@ export async function verifyWorkspaceAccess(user: User): Promise<{
       const emails = normalizeAuthorizedEmails(
         Array.isArray(data.authorizedEmails) ? data.authorizedEmails : []
       );
-      saveStoredAuthorizedEmails(emails);
-      return { allowed: true, emails };
+      if (emails.includes(emailLower)) {
+        saveStoredAuthorizedEmails(emails);
+        return { allowed: true, emails };
+      }
     }
-    // Workspace doc doesn't exist yet; check explicit /admins/{uid}
     const uid = sanitizeFirestoreId(user.uid, 'uid');
     const adminSnap = await getDocFromServer(doc(db, 'admins', uid));
     if (adminSnap.exists()) {
@@ -1104,7 +1117,6 @@ export async function verifyWorkspaceAccess(user: User): Promise<{
     }
     // Offline fallback only if email was already locally cached from prior approval
     const cached = getStoredAuthorizedEmailsFromLocal();
-    const emailLower = user.email.trim().toLowerCase();
     if (cached.includes(emailLower)) {
       return { allowed: true, emails: cached };
     }

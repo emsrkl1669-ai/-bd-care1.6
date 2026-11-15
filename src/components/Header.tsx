@@ -20,16 +20,14 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
-  Server,
+  LogOut,
 } from 'lucide-react';
 import {
-  ADMIN_USERS,
   AdminUser,
   PatientRecord,
   FuneralAssistanceRecord,
   DonationDistributionRecord,
   AccessRequestRecord,
-  LanStorageConfig,
 } from '../types';
 import {
   exportToCsv,
@@ -60,7 +58,7 @@ interface HeaderProps {
   cloudErrorReason?: 'permission-denied' | 'network' | null;
   authorizedEmails?: string[];
   onSaveAuthorizedEmails?: (emails: string[]) => Promise<void>;
-  onCloudSignIn?: () => void;
+  onSwitchUserAccount?: (username: string, password: string) => Promise<void>;
   onCloudSignOut?: () => void;
   onManualCloudSync?: () => void;
   externalLoginOpen?: boolean;
@@ -71,14 +69,6 @@ interface HeaderProps {
   pendingAccessRequests?: AccessRequestRecord[];
   onApproveAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
   onRejectAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
-  lanConfig?: LanStorageConfig;
-  lanStatus?: 'disabled' | 'syncing' | 'connected' | 'error';
-  lanStatusInfo?: {
-    dataFilePath?: string;
-    errorMessage?: string;
-    counts?: { patients: number; funerals: number; donations: number };
-  } | null;
-  onSaveAndSyncLan?: (serverUrl: string, enabled: boolean) => Promise<void>;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -97,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({
   cloudErrorReason = null,
   authorizedEmails,
   onSaveAuthorizedEmails,
-  onCloudSignIn,
+  onSwitchUserAccount,
   onCloudSignOut,
   onManualCloudSync,
   externalLoginOpen = false,
@@ -108,10 +98,6 @@ export const Header: React.FC<HeaderProps> = ({
   pendingAccessRequests = [],
   onApproveAccessRequest,
   onRejectAccessRequest,
-  lanConfig,
-  lanStatus = 'disabled',
-  lanStatusInfo = null,
-  onSaveAndSyncLan,
 }) => {
   const { showToast } = useUiFeedback();
   const [isAdminDropdownOpen, setIsAdminDropdownOpen] = useState(false);
@@ -319,7 +305,7 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'bg-red-50 text-red-700 border-red-200'
                   : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
               }`}
-              title={`บัญชี Cloud: ${firebaseUser.email || ''} • คลิกเพื่อซิงค์ทันที`}
+              title={`ฐานข้อมูล Cloud Firestore (smart-time-ca6f9) • ผู้ใช้: ${currentAdmin.username} • คลิกเพื่อซิงค์ทันที`}
             >
               {cloudStatus === 'syncing' ? (
                 <RefreshCw className="w-3 h-3 animate-spin text-blue-600" />
@@ -345,41 +331,14 @@ export const Header: React.FC<HeaderProps> = ({
           ) : (
             <button
               type="button"
-              onClick={onCloudSignIn}
+              onClick={() => setIsLoginModalOpen(true)}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition cursor-pointer"
-              title="เชื่อมต่อ Google เพื่อบันทึกข้อมูลถาวรบน Cloud Firestore"
+              title="เข้าสู่ระบบด้วย Username และ Password เพื่อซิงค์ Cloud"
             >
               <CloudOff className="w-3 h-3 text-amber-600" />
               <span className="hidden sm:inline">เชื่อมต่อ Cloud</span>
             </button>
           )}
-
-          {/* LAN Server (192.168.1.45) Quick Button */}
-          <button
-            type="button"
-            onClick={() => setIsLoginModalOpen(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition cursor-pointer ${
-              lanStatus === 'connected'
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
-                : lanStatus === 'syncing'
-                ? 'bg-blue-50 text-blue-700 border-blue-200'
-                : lanStatus === 'error'
-                ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
-                : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
-            }`}
-            title={`เซิร์ฟเวอร์ LAN: ${lanConfig?.serverUrl || 'http://192.168.1.45:3000'} • คลิกเพื่อตั้งค่าหรือซิงค์`}
-          >
-            <Server
-              className={`w-3 h-3 ${
-                lanStatus === 'connected'
-                  ? 'text-emerald-600'
-                  : lanStatus === 'error'
-                  ? 'text-red-600'
-                  : 'text-slate-600'
-              }`}
-            />
-            <span className="hidden md:inline font-mono">192.168.1.45</span>
-          </button>
 
           {/* Online badge */}
           <div className="hidden xl:flex items-center text-[11px]">
@@ -394,12 +353,12 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
 
-          {/* Admin Switcher & Login Button */}
+          {/* Authenticated User Account & Login Button */}
           <div className="relative">
             <button
               onClick={() => setIsAdminDropdownOpen(!isAdminDropdownOpen)}
               className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer border border-slate-200 text-slate-800"
-              title="คลิกเพื่อสลับผู้ดูแลระบบหรือตั้งค่า Cloud Sync"
+              title="บัญชีผู้ใช้งานปัจจุบัน • คลิกเพื่อเข้าสู่ระบบบัญชีอื่นหรือจัดการสิทธิ์"
             >
               <div className={`w-2 h-2 rounded-full ${currentAdmin.avatarColor}`} />
               <div className="flex flex-col text-left">
@@ -407,7 +366,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {currentAdmin.name}
                 </span>
                 <span className="text-[10px] text-blue-700 font-medium leading-none">
-                  {currentAdmin.roleTitle.replace('(Admin)', '').trim()}
+                  @{currentAdmin.username} • {currentAdmin.roleTitle.replace('(Admin)', '').trim()}
                 </span>
               </div>
               <ChevronDown className="w-3 h-3 text-slate-500 ml-0.5" />
@@ -415,74 +374,50 @@ export const Header: React.FC<HeaderProps> = ({
 
             {isAdminDropdownOpen && (
               <div
-                className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 py-1.5 z-50 text-slate-800"
+                className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-50 text-slate-800"
                 onMouseLeave={() => setIsAdminDropdownOpen(false)}
               >
-                <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
-                  <p className="text-[10.5px] font-bold text-slate-600 uppercase tracking-wider">
-                    สลับบัญชีผู้ดูแลระบบ (Admin)
-                  </p>
-                  <button
-                    onClick={() => {
-                      setIsAdminDropdownOpen(false);
-                      setIsLoginModalOpen(true);
-                    }}
-                    className="text-[11px] text-blue-600 hover:underline font-bold flex items-center gap-1 cursor-pointer"
-                  >
-                    <Key className="w-3 h-3" />
-                    <span>ล็อกอิน / Cloud</span>
-                  </button>
+                <div className="px-3.5 py-2 border-b border-slate-100 bg-slate-50">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    บัญชีที่เข้าสู่ระบบอยู่
+                  </div>
+                  <div className="font-bold text-xs text-slate-900 mt-0.5 truncate">
+                    {currentAdmin.name}
+                  </div>
+                  <div className="text-[11px] text-blue-700 font-medium truncate">
+                    {currentAdmin.roleTitle}
+                  </div>
+                  <div className="text-[10.5px] text-slate-500 font-mono mt-0.5">
+                    Username: {currentAdmin.username}
+                  </div>
                 </div>
-                {ADMIN_USERS.map((admin) => {
-                  const requiresPassword =
-                    admin.id === 'officer-gritpipat' && currentAdmin.id !== admin.id;
-                  return (
-                    <button
-                      key={admin.id}
-                      onClick={() => {
-                        if (requiresPassword) {
-                          setIsAdminDropdownOpen(false);
-                          setIsLoginModalOpen(true);
-                          return;
-                        }
-                        setCurrentAdmin(admin);
-                        setIsAdminDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 flex items-start gap-2.5 hover:bg-blue-50 transition cursor-pointer ${
-                        currentAdmin.id === admin.id ? 'bg-blue-50/80 border-l-4 border-blue-600' : ''
-                      }`}
-                    >
-                      <div className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${admin.avatarColor}`} />
-                      <div className="min-w-0 flex-1">
-                        <div className="font-bold text-xs text-slate-900 flex items-center justify-between gap-2">
-                          <span className="truncate">{admin.name}</span>
-                          {requiresPassword && (
-                            <span className="text-[9.5px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-semibold shrink-0 flex items-center gap-0.5">
-                              <Lock className="w-2.5 h-2.5" />
-                              ใช้รหัสผ่าน
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-blue-700 font-medium">{admin.roleTitle}</div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          Username: {admin.username}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
 
-                <div className="border-t border-slate-100 pt-1.5 px-3 pb-1">
+                <div className="p-2 space-y-1.5">
                   <button
+                    type="button"
                     onClick={() => {
                       setIsAdminDropdownOpen(false);
                       setIsLoginModalOpen(true);
                     }}
-                    className="w-full py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-800 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer"
                   >
-                    <Lock className="w-3.5 h-3.5" />
-                    <span>เข้าสู่ระบบ & ตั้งค่าซิงค์ Cloud</span>
+                    <Key className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                    <span>สลับบัญชีด้วย Username / Password</span>
                   </button>
+
+                  {onCloudSignOut && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAdminDropdownOpen(false);
+                        onCloudSignOut();
+                      }}
+                      className="w-full py-2 px-3 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5 shrink-0" />
+                      <span>ออกจากระบบ</span>
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -625,7 +560,7 @@ export const Header: React.FC<HeaderProps> = ({
         cloudErrorReason={cloudErrorReason}
         authorizedEmails={authorizedEmails}
         onSaveAuthorizedEmails={onSaveAuthorizedEmails}
-        onCloudSignIn={onCloudSignIn}
+        onSwitchUserAccount={onSwitchUserAccount}
         onCloudSignOut={onCloudSignOut}
         onManualCloudSync={onManualCloudSync}
         myAccessRequest={myAccessRequest}
@@ -634,10 +569,6 @@ export const Header: React.FC<HeaderProps> = ({
         pendingAccessRequests={pendingAccessRequests}
         onApproveAccessRequest={onApproveAccessRequest}
         onRejectAccessRequest={onRejectAccessRequest}
-        lanConfig={lanConfig}
-        lanStatus={lanStatus}
-        lanStatusInfo={lanStatusInfo}
-        onSaveAndSyncLan={onSaveAndSyncLan}
       />
     </header>
   );
