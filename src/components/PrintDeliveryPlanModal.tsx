@@ -101,38 +101,38 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
     }, 0);
   }, [diaperCounts]);
 
-  // Layout-aware pagination: non-last pages hold more compact rows cleanly, while the last page reserves space for signatures
+  // Layout-aware pagination: compact rows allow 15 entries to condense cleanly onto 2 well-organized pages, with signatures anchored at the end of the last page
   const pages = useMemo(() => {
     if (patients.length === 0) return [[]];
 
     const estimateRowHeight = (p: PatientRecord): number => {
-      let h = 56;
+      let h = 44;
       const addrLen =
         (p.currentAddress.houseNo || '').length +
         (p.currentAddress.buildingVillage || '').length +
         (p.currentAddress.road || '').length +
         (p.currentAddress.subdistrict || '').length +
         (p.currentAddress.district || '').length;
-      if (addrLen > 60) h += 12;
+      if (addrLen > 68) h += 11;
       if (p.landmarkNote) {
-        h += p.landmarkNote.length > 38 ? 22 : 12;
+        h += p.landmarkNote.length > 42 ? 20 : 11;
       }
       const supplyLines =
         (p.helpCashEnabled ? 1 : 0) +
         (p.helpDiaperSize && p.helpDiaperSize !== 'NONE' ? 1 : 0) +
         1 +
         (p.helpWaterSize !== 'NONE' && (p.helpWaterPacks || 0) > 0 ? 1 : 0) +
-        (p.helpOtherSupplies ? (p.helpOtherSupplies.length > 32 ? 2 : 1) : 0);
-      if (supplyLines >= 4) h += (supplyLines - 3) * 11;
+        (p.helpOtherSupplies ? (p.helpOtherSupplies.length > 34 ? 2 : 1) : 0);
+      if (supplyLines >= 4) h += (supplyLines - 3) * 10;
       return h;
     };
 
-    // Usable A4 height (296mm ~ 1118px, minus 16mm vertical padding ~ 60px, minus safety buffer ~ 38px = ~1020px)
-    const SAFE_SHEET_HEIGHT = 1020;
-    const HEADER_SUBHEADER_THEAD = 148;
-    const PAGE1_SUMMARY_HEIGHT = 50;
-    const SIGNATURE_FOOTER_HEIGHT = 148;
-    const NON_LAST_FOOTER_HEIGHT = 38;
+    // Usable A4 height (295mm ~ 1114px, minus 12mm vertical padding ~ 45px, minus safety buffer ~ 39px = 1030px)
+    const SAFE_SHEET_HEIGHT = 1030;
+    const HEADER_SUBHEADER_THEAD = 124;
+    const PAGE1_SUMMARY_HEIGHT = 44;
+    const SIGNATURE_FOOTER_HEIGHT = 136;
+    const NON_LAST_FOOTER_HEIGHT = 32;
 
     const getNonLastBudget = (pageIndex: number) =>
       SAFE_SHEET_HEIGHT -
@@ -153,7 +153,7 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
     for (const p of patients) {
       const rowH = estimateRowHeight(p);
       const budget = getNonLastBudget(result.length);
-      if (currentRows.length > 0 && (currentHeight + rowH > budget || currentRows.length >= 9)) {
+      if (currentRows.length > 0 && (currentHeight + rowH > budget || currentRows.length >= 10)) {
         result.push(currentRows);
         currentRows = [p];
         currentHeight = rowH;
@@ -168,17 +168,11 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
       const lastBudget = getLastBudget(lastPageIndex);
 
       if (currentHeight > lastBudget && currentRows.length > 1) {
-        // Move trailing rows onto a new final sheet so the signature block fits cleanly without breaking rows
         let keptHeight = 0;
         let splitIdx = currentRows.length;
         for (let i = 0; i < currentRows.length; i++) {
           const rowH = estimateRowHeight(currentRows[i]);
-          if (i > 0 && keptHeight + rowH > getNonLastBudget(lastPageIndex)) {
-            splitIdx = i;
-            break;
-          }
-          // Leave at least 1 row with the signature block if keeping all exceeds lastBudget
-          if (keptHeight + rowH > lastBudget && i > 0) {
+          if (i > 0 && (keptHeight + rowH > getNonLastBudget(lastPageIndex) || keptHeight + rowH > lastBudget)) {
             splitIdx = i;
             break;
           }
@@ -334,85 +328,85 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
           return (
             <div
               key={pageIdx}
-              className={`a4-sheet a4-sheet-compact bg-white text-slate-900 shadow-2xl relative flex flex-col justify-between p-4 sm:py-[8mm] sm:px-[10mm] border border-slate-300 font-['Sarabun',sans-serif] ${
+              className={`a4-sheet a4-sheet-compact bg-white text-slate-900 shadow-2xl relative flex flex-col justify-between p-4 sm:py-[6mm] sm:px-[9mm] border border-slate-300 font-['Sarabun',sans-serif] ${
                 isHiddenOnScreen ? 'hidden print:flex' : 'flex'
               } ${isLastPage ? 'last-sheet' : ''}`}
             >
               {/* Top Section: Header & Summary */}
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {/* Official Foundation Header */}
-                <div className="flex items-start justify-between border-b-2 border-slate-900 pb-2">
+                <div className="flex items-start justify-between border-b-2 border-slate-900 pb-1.5">
                   <div className="flex items-center gap-2.5">
                     <img
                       src="/assets/aistudio/382492-Photoroom_4c9e02f3.png"
                       alt="ตรามูลนิธิร่วมกุศลสมุทรปราการ"
-                      className="w-12 h-12 object-contain shrink-0"
+                      className="w-11 h-11 object-contain shrink-0"
                     />
                     <div>
-                      <div className="text-[15px] font-black text-slate-900 tracking-tight leading-tight">
+                      <div className="text-[14.5px] font-black text-slate-900 tracking-tight leading-tight">
                         มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)
                       </div>
-                      <div className="text-[11.5px] font-bold text-blue-900 leading-tight mt-0.5">
+                      <div className="text-[11px] font-bold text-blue-900 leading-tight mt-0.5">
                         โครงการใจถึงใจช่วยผู้ป่วยติดเตียงและยากไร้
                       </div>
-                      <div className="text-[11px] font-semibold text-slate-800 leading-tight mt-0.5">
+                      <div className="text-[10.5px] font-semibold text-slate-800 leading-tight">
                         แผนการส่งมอบสิ่งของสงเคราะห์ & บัญชีลงลายมือชื่อรับมอบสิ่งของประจำเดือน
                       </div>
                     </div>
                   </div>
 
                   <div className="text-right shrink-0">
-                    <div className="inline-block border border-slate-900 rounded px-2 py-0.5 text-[10px] font-bold text-slate-900 bg-slate-50">
+                    <div className="inline-block border border-slate-900 rounded px-2 py-0.5 text-[9.5px] font-bold text-slate-900 bg-slate-50">
                       เอกสารโครงการใจถึงใจ
                     </div>
-                    <div className="text-[10.5px] font-semibold text-slate-700 mt-0.5">
+                    <div className="text-[10px] font-semibold text-slate-700 mt-0.5">
                       รอบเดือน: <span className="text-blue-900 font-bold">{currentMonth}</span>
                     </div>
-                    <div className="text-[10px] text-slate-500 font-mono">
+                    <div className="text-[9.5px] text-slate-500 font-mono">
                       หน้า {pageIdx + 1} จาก {totalPages}
                     </div>
                   </div>
                 </div>
 
                 {/* Sub-header: District & Officer */}
-                <div className="flex flex-wrap items-center justify-between text-[11px] bg-slate-50 px-2.5 py-1 rounded border border-slate-200">
+                <div className="flex flex-wrap items-center justify-between text-[10.5px] bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
                   <div className="flex items-center gap-1.5 font-medium text-slate-800">
-                    <MapPin className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                    <MapPin className="w-3 h-3 text-red-600 shrink-0" />
                     <span>สายส่งมอบ: <strong className="text-slate-900">{districtLabel}</strong></span>
                   </div>
-                  <div className="text-[10.5px] text-slate-700">
+                  <div className="text-[10px] text-slate-700">
                     เจ้าหน้าที่ผู้จัดทำ/ลงพื้นที่: <strong className="text-slate-900">นายกริชพิพัฒน์  สลับทอง</strong> (เจ้าหน้าที่ฝ่ายสังคมสงเคราะห์)
                   </div>
                 </div>
 
                 {/* Page 1 Summary Card */}
                 {pageIdx === 0 && (
-                  <div className="grid grid-cols-5 gap-2 text-center text-[10px] border border-blue-200 bg-blue-50/60 px-2 py-1 rounded">
+                  <div className="grid grid-cols-5 gap-1.5 text-center text-[9.5px] border border-blue-200 bg-blue-50/60 px-2 py-1 rounded">
                     <div className="border-r border-blue-200/80 pr-1">
-                      <div className="text-slate-500 text-[9.5px] leading-tight">ผู้ป่วยรับมอบ</div>
-                      <div className="font-black text-[12.5px] text-slate-900 leading-tight">{patients.length} ราย</div>
+                      <div className="text-slate-500 text-[9px] leading-tight">ผู้ป่วยรับมอบ</div>
+                      <div className="font-black text-[12px] text-slate-900 leading-tight">{patients.length} ราย</div>
                     </div>
                     <div className="border-r border-blue-200/80 pr-1">
-                      <div className="text-slate-500 text-[9.5px] leading-tight">เงินสดรวม</div>
-                      <div className="font-black text-[12.5px] text-emerald-700 leading-tight">{formatCurrency(totalCash)} บ.</div>
+                      <div className="text-slate-500 text-[9px] leading-tight">เงินสดรวม</div>
+                      <div className="font-black text-[12px] text-emerald-700 leading-tight">{formatCurrency(totalCash)} บ.</div>
                     </div>
                     <div className="border-r border-blue-200/80 pr-1">
-                      <div className="text-slate-500 text-[9.5px] leading-tight">ข้าวสาร (5 กก.)</div>
-                      <div className="font-black text-[12.5px] text-amber-800 leading-tight">{totalRice} ถุง</div>
+                      <div className="text-slate-500 text-[9px] leading-tight">ข้าวสาร (5 กก.)</div>
+                      <div className="font-black text-[12px] text-amber-800 leading-tight">{totalRice} ถุง</div>
                     </div>
                     <div className="border-r border-blue-200/80 pr-1">
-                      <div className="text-slate-500 text-[9.5px] leading-tight">น้ำดื่มสิงห์รวม</div>
-                      <div className="font-black text-[12.5px] text-cyan-800 leading-tight">{waterCounts.total} แพ็ค</div>
-                      <div className="text-[8.5px] text-slate-600 leading-none">
+                      <div className="text-slate-500 text-[9px] leading-tight">น้ำดื่มสิงห์รวม</div>
+                      <div className="font-black text-[12px] text-cyan-800 leading-tight">{waterCounts.total} แพ็ค</div>
+                      <div className="text-[8px] text-slate-600 leading-none">
                         (1.5L:{waterCounts.size15L} • 600ML:{waterCounts.size600ML})
                       </div>
                     </div>
                     <div>
-                      <div className="text-slate-500 text-[9.5px] leading-tight">ผ้าอ้อมผู้ใหญ่</div>
-                      <div className="font-black text-[12.5px] text-indigo-800 leading-tight">
+                      <div className="text-slate-500 text-[9px] leading-tight">ผ้าอ้อมผู้ใหญ่</div>
+                      <div className="font-black text-[12px] text-indigo-800 leading-tight">
                         {totalDiapers} ห่อ
                       </div>
-                      <div className="text-[8.5px] text-slate-600 leading-none">
+                      <div className="text-[8px] text-slate-600 leading-none">
                         (M:{diaperCounts.M} L:{diaperCounts.L} XL:{diaperCounts.XL} XXL:{diaperCounts.XXL})
                       </div>
                     </div>
@@ -421,14 +415,14 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
 
                 {/* Patient Delivery Dispatch Table */}
                 <div className="border border-slate-900 rounded overflow-hidden">
-                  <table className="w-full table-fixed text-left border-collapse text-[10px] leading-[1.3]">
+                  <table className="w-full table-fixed text-left border-collapse text-[9.5px] leading-[1.22]">
                     <thead>
                       <tr className="bg-slate-800 text-white font-bold text-center border-b border-slate-900">
-                        <th className="py-1.5 px-1 w-[6%] border-r border-slate-700">ลำดับ</th>
-                        <th className="py-1.5 px-1.5 w-[22%] text-left border-r border-slate-700">รหัส / ชื่อผู้ป่วย</th>
-                        <th className="py-1.5 px-1.5 w-[32%] border-r border-slate-700 text-left">ที่อยู่ส่งมอบ & เบอร์ติดต่อ</th>
-                        <th className="py-1.5 px-1.5 w-[24%] border-r border-slate-700 text-left">รายการสิ่งของส่งมอบ</th>
-                        <th className="py-1.5 px-1 w-[16%] text-center">ลายมือชื่อผู้รับมอบ</th>
+                        <th className="py-1 px-1 w-[5%] border-r border-slate-700">ลำดับ</th>
+                        <th className="py-1 px-1.5 w-[22%] text-left border-r border-slate-700">รหัส / ชื่อผู้ป่วย</th>
+                        <th className="py-1 px-1.5 w-[35%] border-r border-slate-700 text-left">ที่อยู่ส่งมอบ & เบอร์ติดต่อ</th>
+                        <th className="py-1 px-1.5 w-[24%] border-r border-slate-700 text-left">รายการสิ่งของส่งมอบ</th>
+                        <th className="py-1 px-1 w-[14%] text-center">ลายมือชื่อผู้รับมอบ</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-300">
@@ -448,48 +442,46 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
                           return (
                             <tr key={patient.id} className="align-top hover:bg-slate-50">
                               {/* No. */}
-                              <td className="py-1 px-1 text-center font-bold text-slate-800 border-r border-slate-300">
+                              <td className="py-[3px] px-1 text-center font-bold text-slate-800 border-r border-slate-300">
                                 {globalIdx}
                               </td>
 
                               {/* Patient ID & Name */}
-                              <td className="py-1 px-1.5 border-r border-slate-300 break-words">
-                                <div className="font-bold text-slate-900 text-[10.5px] leading-tight">
+                              <td className="py-[3px] px-1.5 border-r border-slate-300 break-words">
+                                <div className="font-bold text-slate-900 text-[10px] leading-tight">
                                   {patient.fullName}
                                 </div>
-                                <div className="text-[9.5px] font-mono font-bold text-blue-800 mt-0.5">
-                                  รหัส: {patient.code}
+                                <div className="text-[9px] text-slate-700 leading-tight mt-0.5">
+                                  <span className="font-mono font-bold text-blue-800">{patient.code}</span>
+                                  <span> • {mobilityText}</span>
                                 </div>
-                                <div className="text-[9px] text-slate-600">
-                                  สภาพ: <span className="font-semibold text-slate-800">{mobilityText}</span>
-                                </div>
-                                <div className="text-[9px] text-slate-500 font-mono">
+                                <div className="text-[8.5px] text-slate-500 font-mono leading-tight">
                                   บัตร: {patient.nationalId ? patient.nationalId.slice(0, 10) + '...' : '-'}
                                 </div>
                               </td>
 
                               {/* Address, Landmark & Contact */}
-                              <td className="py-1 px-1.5 border-r border-slate-300 break-words">
-                                <div className="font-medium text-slate-800 text-[9.5px] leading-tight">
+                              <td className="py-[3px] px-1.5 border-r border-slate-300 break-words">
+                                <div className="font-medium text-slate-800 text-[9px] leading-tight">
                                   เลขที่ {patient.currentAddress.houseNo}
                                   {patient.currentAddress.buildingVillage && ` ${patient.currentAddress.buildingVillage}`}
                                   {patient.currentAddress.road && ` ถ.${patient.currentAddress.road}`}
                                   {` ต.${patient.currentAddress.subdistrict} อ.${patient.currentAddress.district}`}
                                 </div>
                                 {patient.landmarkNote && (
-                                  <div className="text-[9px] text-amber-900 italic leading-tight mt-0.5">
+                                  <div className="text-[8.5px] text-amber-900 italic leading-tight mt-0.5">
                                     จุดสังเกต: {patient.landmarkNote}
                                   </div>
                                 )}
-                                <div className="text-[9px] text-slate-700 mt-0.5">
+                                <div className="text-[8.5px] text-slate-700 leading-tight mt-0.5">
                                   ผู้ดูแล: <span className="font-semibold">{patient.caregiverName || patient.fullName}</span>
                                   {patient.caregiverPhone && ` (${formatPhone(patient.caregiverPhone)})`}
                                 </div>
                               </td>
 
                               {/* Items to Deliver */}
-                              <td className="py-1 px-1.5 border-r border-slate-300 break-words">
-                                <div className="space-y-0.5 text-[9.5px] leading-tight">
+                              <td className="py-[3px] px-1.5 border-r border-slate-300 break-words">
+                                <div className="space-y-[1px] text-[9px] leading-tight">
                                   {patient.helpCashEnabled && (
                                     <div className="font-bold text-emerald-900">
                                       [✓] เงินสด: <strong>{formatCurrency(patient.helpCashAmount)}</strong> บ.
@@ -509,7 +501,7 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
                                     </div>
                                   )}
                                   {patient.helpOtherSupplies && (
-                                    <div className="text-[9px] text-slate-600">
+                                    <div className="text-[8.5px] text-slate-600">
                                       [✓] อื่นๆ: {patient.helpOtherSupplies}
                                     </div>
                                   )}
@@ -517,9 +509,9 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
                               </td>
 
                               {/* Recipient Signature Box */}
-                              <td className="py-1 px-1 text-center bg-slate-50/50 align-middle">
-                                <div className="pt-4 pb-1">
-                                  <div className="border-b border-dotted border-slate-700 w-24 mx-auto"></div>
+                              <td className="py-[3px] px-1 text-center bg-slate-50/50 align-middle">
+                                <div className="pt-3.5 pb-0.5">
+                                  <div className="border-b border-dotted border-slate-700 w-20 mx-auto"></div>
                                 </div>
                               </td>
                             </tr>
@@ -531,8 +523,8 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
                 </div>
               </div>
 
-              {/* Bottom Section: Official Foundation Signatures on Last Page ONLY */}
-              <div className="mt-2 pt-2 border-t-2 border-slate-900 space-y-1.5 signature-block-keep">
+              {/* Bottom Section: Official Foundation Signatures anchored at the very end of the Final Page ONLY */}
+              <div className="mt-auto pt-2 border-t-2 border-slate-900 space-y-1.5 signature-block-keep">
                 {isLastPage ? (
                   <div className="grid grid-cols-2 gap-6 text-center">
                     {/* Left: Officer Signature (นายกริชพิพัฒน์ สลับทอง) */}
@@ -540,14 +532,14 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
                       <div className="text-[11px] font-bold text-slate-900">
                         ผู้ส่งมอบ / ผู้จัดทำแผนการส่งมอบ
                       </div>
-                      <div className="pt-7 border-b border-dotted border-slate-700 w-52 mx-auto"></div>
-                      <div className="text-[11.5px] font-black text-slate-900 mt-1">
+                      <div className="pt-6 border-b border-dotted border-slate-700 w-52 mx-auto"></div>
+                      <div className="text-[11px] font-black text-slate-900 mt-1">
                         ( นายกริชพิพัฒน์ สลับทอง )
                       </div>
-                      <div className="text-[10.5px] font-semibold text-slate-700">
+                      <div className="text-[10px] font-semibold text-slate-700">
                         เจ้าหน้าที่ฝ่ายสังคมสงเคราะห์
                       </div>
-                      <div className="text-[9.5px] text-slate-500">
+                      <div className="text-[9px] text-slate-500">
                         วันที่ .......... เดือน .............................. พ.ศ. ................
                       </div>
                     </div>
@@ -557,27 +549,27 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
                       <div className="text-[11px] font-bold text-slate-900">
                         ผู้ตรวจสอบและอนุมัติการส่งมอบ
                       </div>
-                      <div className="pt-7 border-b border-dotted border-slate-700 w-52 mx-auto"></div>
-                      <div className="text-[11.5px] font-black text-slate-900 mt-1">
+                      <div className="pt-6 border-b border-dotted border-slate-700 w-52 mx-auto"></div>
+                      <div className="text-[11px] font-black text-slate-900 mt-1">
                         ( นางสาวศาตพร ภูมิโคกรักษ์ )
                       </div>
-                      <div className="text-[10.5px] font-semibold text-slate-700">
+                      <div className="text-[10px] font-semibold text-slate-700">
                         ผู้จัดการมูลนิธิร่วมกุศลสมุทรปราการ
                       </div>
-                      <div className="text-[9.5px] text-slate-500">
+                      <div className="text-[9px] text-slate-500">
                         วันที่ .......... เดือน .............................. พ.ศ. ................
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between text-[10px] text-slate-500 px-1">
+                  <div className="flex items-center justify-between text-[9.5px] text-slate-500 px-1">
                     <span>(มีรายการต่อหน้าถัดไป — ลงชื่อผู้ส่งมอบและผู้อนุมัติในหน้าสุดท้ายแผ่นเดียว หน้า {totalPages})</span>
                     <span>แผนการส่งมอบสิ่งของสงเคราะห์ • มูลนิธิร่วมกุศลสมุทรปราการ</span>
                   </div>
                 )}
 
                 {/* Footer Watermark */}
-                <div className="flex items-center justify-between text-[9px] text-slate-500 border-t border-slate-200 pt-1">
+                <div className="flex items-center justify-between text-[8.5px] text-slate-500 border-t border-slate-200 pt-1">
                   <div>
                     ระบบดิจิทัล BD-Care • มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂) • โทร. 02-395-0118, 02-387-1111
                   </div>

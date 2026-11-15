@@ -48,7 +48,7 @@ export function PrintRosterModal<T>({
   items,
   columns,
   summaryItems,
-  itemsPerPage = 9,
+  itemsPerPage = 10,
   onClose,
   preparedBy = {
     name: 'นายกริชพิพัฒน์  สลับทอง',
@@ -224,12 +224,12 @@ export function PrintRosterModal<T>({
           return (
             <div
               key={pageIdx}
-              className={`a4-sheet a4-sheet-compact bg-white text-slate-900 shadow-2xl relative flex flex-col justify-between p-4 sm:py-[8mm] sm:px-[10mm] border border-slate-300 font-['Sarabun',sans-serif] ${
+              className={`a4-sheet a4-sheet-compact bg-white text-slate-900 shadow-2xl relative flex flex-col justify-between p-4 sm:py-[6mm] sm:px-[9mm] border border-slate-300 font-['Sarabun',sans-serif] ${
                 isHiddenOnScreen ? 'hidden print:flex' : 'flex'
               } ${isLastPage ? 'last-sheet' : ''}`}
             >
               {/* Top Section */}
-              <div className="space-y-2.5">
+              <div className="space-y-2">
                 {/* Official Foundation Header */}
                 <div className="flex items-start justify-between border-b-2 border-slate-900 pb-2.5">
                   <div className="flex items-center gap-3">
@@ -279,14 +279,14 @@ export function PrintRosterModal<T>({
 
                 {/* Data Table */}
                 <div className="border border-slate-900 rounded overflow-hidden">
-                  <table className="w-full text-left border-collapse text-[10px] leading-[1.3]">
+                  <table className="w-full text-left border-collapse text-[9.5px] leading-[1.22]">
                     <thead>
                       <tr className="bg-slate-900 text-white font-bold text-center border-b border-slate-900">
-                        <th className="p-1.5 w-10 border-r border-slate-700">ลำดับ</th>
+                        <th className="py-1 px-1 w-9 border-r border-slate-700">ลำดับ</th>
                         {columns.map((col, cIdx) => (
                           <th
                             key={cIdx}
-                            className={`p-1.5 ${col.width || ''} ${
+                            className={`py-1 px-1.5 ${col.width || ''} ${
                               cIdx < columns.length - 1 ? 'border-r border-slate-700' : ''
                             } ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left'}`}
                           >
@@ -307,13 +307,13 @@ export function PrintRosterModal<T>({
                           const globalIdx = pageIdx * itemsPerPage + rowIdx + 1;
                           return (
                             <tr key={rowIdx} className="align-middle hover:bg-slate-50">
-                              <td className="p-1.5 text-center font-bold text-slate-800 border-r border-slate-300">
+                              <td className="py-1 px-1 text-center font-bold text-slate-800 border-r border-slate-300">
                                 {globalIdx}
                               </td>
                               {columns.map((col, cIdx) => (
                                 <td
                                   key={cIdx}
-                                  className={`p-1.5 ${
+                                  className={`py-1 px-1.5 ${
                                     cIdx < columns.length - 1 ? 'border-r border-slate-300' : ''
                                   } ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left'}`}
                                 >
@@ -330,7 +330,7 @@ export function PrintRosterModal<T>({
               </div>
 
               {/* Bottom Section: Official Signatures on Last Page (or compact on each) */}
-              <div className="mt-2.5 pt-2 border-t-2 border-slate-900 space-y-1.5 signature-block-keep">
+              <div className="mt-auto pt-2 border-t-2 border-slate-900 space-y-1.5 signature-block-keep">
                 {isLastPage ? (
                   <div className="grid grid-cols-2 gap-8 text-center">
                     {/* Left: Officer Signature */}

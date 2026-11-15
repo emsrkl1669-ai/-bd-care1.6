@@ -88,10 +88,10 @@
     flex-direction: column !important;
     justify-content: space-between !important;
     width: 210mm !important;
-    min-height: 296mm !important;
+    min-height: 295mm !important;
     height: auto !important;
     margin: 0 auto !important;
-    padding: 10mm 12mm !important;
+    padding: 9mm 11mm !important;
     box-sizing: border-box !important;
     box-shadow: none !important;
     border: none !important;
@@ -109,7 +109,7 @@
   }
 
   .a4-sheet.a4-sheet-compact {
-    padding: 8mm 10mm !important;
+    padding: 6mm 9mm !important;
   }
 
   .a4-sheet thead {
@@ -120,6 +120,12 @@
   .signature-block-keep {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+  }
+
+  .a4-sheet td,
+  .a4-sheet th {
+    overflow-wrap: break-word !important;
+    word-break: break-word !important;
   }
 
   /* Prevent trailing blank page after the last sheet */
