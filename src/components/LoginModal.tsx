@@ -17,8 +17,11 @@ import {
   Users,
   Plus,
   Trash2,
+  UserPlus,
+  Check,
+  Clock,
 } from 'lucide-react';
-import { ADMIN_USERS, AdminUser } from '../types';
+import { ADMIN_USERS, AdminUser, AccessRequestRecord } from '../types';
 import { SUPER_ADMIN_EMAIL, isSuperAdminUser } from '../firebase';
 
 interface LoginModalProps {
@@ -34,6 +37,12 @@ interface LoginModalProps {
   onCloudSignIn?: () => void;
   onCloudSignOut?: () => void;
   onManualCloudSync?: () => void;
+  myAccessRequest?: AccessRequestRecord | null;
+  isSubmittingRequest?: boolean;
+  onSubmitAccessRequest?: (note?: string) => Promise<void>;
+  pendingAccessRequests?: AccessRequestRecord[];
+  onApproveAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
+  onRejectAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
@@ -49,6 +58,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   onCloudSignIn,
   onCloudSignOut,
   onManualCloudSync,
+  myAccessRequest = null,
+  isSubmittingRequest = false,
+  onSubmitAccessRequest,
+  pendingAccessRequests = [],
+  onApproveAccessRequest,
+  onRejectAccessRequest,
 }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -57,6 +72,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [successMsg, setSuccessMsg] = useState('');
   const [newTeamEmail, setNewTeamEmail] = useState('');
   const [isSavingEmails, setIsSavingEmails] = useState(false);
+  const [processingReqUid, setProcessingReqUid] = useState<string | null>(null);
   const [teamMsg, setTeamMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   if (!isOpen) return null;
@@ -193,15 +209,41 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 </div>
 
                 {cloudErrorReason === 'permission-denied' && !isSuperAdminUser(firebaseUser) && (
-                  <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-[11.5px] text-red-800 space-y-1">
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-[11.5px] text-red-800 space-y-2">
                     <div className="font-bold flex items-center gap-1.5">
                       <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
                       <span>บัญชีนี้ยังไม่ได้รับอนุญาตให้เข้าถึงข้อมูลกลาง</span>
                     </div>
                     <p className="text-red-700 leading-relaxed">
-                      กรุณาออกจากระบบแล้วเชื่อมต่อด้วยบัญชีหลัก ({SUPER_ADMIN_EMAIL}) หรือให้ผู้ดูแลระบบเพิ่มอีเมล{' '}
-                      <strong>{firebaseUser.email}</strong> ในเมนูสิทธิ์ทีมงานด้านล่าง
+                      สามารถกดส่งคำขอสิทธิ์จากอุปกรณ์นี้เพื่อให้ผู้ดูแลระบบ ({SUPER_ADMIN_EMAIL}) กดอนุมัติได้ทันที หรือสลับไปใช้บัญชีหลักที่ได้รับอนุญาตแล้ว
                     </p>
+                    {myAccessRequest?.status === 'pending' ? (
+                      <div className="p-2 bg-amber-50 border border-amber-300 rounded-lg text-amber-900 font-semibold flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>ส่งคำขอสิทธิ์แล้ว กำลังรอผู้ดูแลระบบอนุมัติ (หน้าจอจะโหลดข้อมูลให้อัตโนมัติทันที)</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {myAccessRequest?.status === 'rejected' && (
+                          <div className="text-[11px] font-semibold text-red-700">
+                            คำขอก่อนหน้าถูกปฏิเสธ คุณสามารถกดส่งคำขอใหม่อีกครั้งได้
+                          </div>
+                        )}
+                        {onSubmitAccessRequest && (
+                          <button
+                            type="button"
+                            disabled={isSubmittingRequest}
+                            onClick={() => onSubmitAccessRequest()}
+                            className="w-full py-2 px-3 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <UserPlus className="w-3.5 h-3.5" />
+                            <span>
+                              {isSubmittingRequest ? 'กำลังส่งคำขอ...' : 'ส่งคำขอสิทธิ์เข้าใช้งานทีมงาน'}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -224,9 +266,70 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   </button>
                 </div>
 
-                {/* Super Admin Team Allowlist for Multi-Device Access */}
+                {/* Super Admin Team Allowlist & Pending Requests for Multi-Device Access */}
                 {isSuperAdminUser(firebaseUser) && onSaveAuthorizedEmails && (
-                  <div className="mt-2 pt-2.5 border-t border-blue-200/80 space-y-2">
+                  <div className="mt-2 pt-2.5 border-t border-blue-200/80 space-y-2.5">
+                    {pendingAccessRequests.length > 0 && (
+                      <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-lg space-y-2">
+                        <div className="text-[11px] font-bold text-amber-900 flex items-center gap-1.5">
+                          <UserPlus className="w-3.5 h-3.5 text-amber-700" />
+                          <span>คำขอสิทธิ์จากอุปกรณ์อื่น ({pendingAccessRequests.length} รายการ)</span>
+                        </div>
+                        <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                          {pendingAccessRequests.map((req) => (
+                            <div
+                              key={req.uid}
+                              className="bg-white border border-amber-200 rounded-lg p-2 flex items-center justify-between gap-2 text-[11px]"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-bold text-slate-900 truncate">
+                                  {req.displayName || req.email}
+                                </div>
+                                <div className="font-mono text-slate-600 truncate">{req.email}</div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {onApproveAccessRequest && (
+                                  <button
+                                    type="button"
+                                    disabled={processingReqUid === req.uid}
+                                    onClick={async () => {
+                                      setProcessingReqUid(req.uid);
+                                      try {
+                                        await onApproveAccessRequest(req);
+                                      } finally {
+                                        setProcessingReqUid(null);
+                                      }
+                                    }}
+                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded font-bold flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>อนุมัติ</span>
+                                  </button>
+                                )}
+                                {onRejectAccessRequest && (
+                                  <button
+                                    type="button"
+                                    disabled={processingReqUid === req.uid}
+                                    onClick={async () => {
+                                      setProcessingReqUid(req.uid);
+                                      try {
+                                        await onRejectAccessRequest(req);
+                                      } finally {
+                                        setProcessingReqUid(null);
+                                      }
+                                    }}
+                                    className="px-2 py-1 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded font-semibold cursor-pointer"
+                                  >
+                                    ปฏิเสธ
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="text-[11px] font-bold text-blue-900 flex items-center gap-1.5">
                       <Users className="w-3.5 h-3.5 text-blue-700" />
                       <span>บัญชี Google ที่ได้รับสิทธิ์ดูและแก้ไขข้อมูลร่วมกันทุกเครื่อง</span>

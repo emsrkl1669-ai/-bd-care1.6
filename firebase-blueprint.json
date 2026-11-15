@@ -927,12 +927,59 @@
         }
       },
       "required": ["id", "ownerUid", "ricePricePerBag", "currentMonth", "updatedAt", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "AccessRequest": {
+      "title": "AccessRequest",
+      "description": "Cross-device team access request submitted by a signed-in Google user for Super Admin approval",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "reviewedBy": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "serverCreatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "status", "serverCreatedAt", "serverUpdatedAt"]
     }
   },
   "firestore": {
     "/admins/{uid}": {
       "schema": { "$ref": "#/entities/AdminMember" },
       "description": "Authorized staff members for BD-Care foundation operations"
+    },
+    "/access_requests/{uid}": {
+      "schema": { "$ref": "#/entities/AccessRequest" },
+      "description": "Pending and reviewed cross-device access requests from other Google accounts"
     },
     "/settings/workspace": {
       "schema": { "$ref": "#/entities/WorkspaceSettings" },

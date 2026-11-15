@@ -82,7 +82,28 @@ export function handleFirestoreError(
 }
 
 export function isSuperAdminUser(user: User | null | undefined): boolean {
-  return Boolean(user?.email && user.emailVerified && user.email === SUPER_ADMIN_EMAIL);
+  return Boolean(
+    user?.email &&
+      user.emailVerified &&
+      user.email.trim().toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()
+  );
+}
+
+export function getAuthSignInErrorMessage(err: any): string | null {
+  const code = err?.code || '';
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return null;
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'เบราว์เซอร์บล็อกหน้าต่างเข้าสู่ระบบ Google กรุณาอนุญาต Pop-up สำหรับเว็บนี้แล้วลองใหม่อีกครั้ง';
+  }
+  if (code === 'auth/unauthorized-domain') {
+    return 'โดเมนนี้ยังไม่ได้รับอนุญาตใน Firebase Auth กรุณาตรวจสอบ Authorized Domains ใน Firebase Console';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'ไม่สามารถเชื่อมต่ออินเทอร์เน็ตเพื่อเข้าสู่ระบบ Google ได้ กรุณาตรวจสอบสัญญาณเครือข่าย';
+  }
+  return 'ไม่สามารถเชื่อมต่อบัญชี Google ได้ กรุณาลองใหม่อีกครั้ง';
 }
 
 export async function signInWithGoogle(): Promise<User> {

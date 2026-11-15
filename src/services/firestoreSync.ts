@@ -31,6 +31,7 @@ import {
   DonationPhoto,
   DonationDocument,
   DeliveryPlanSettings,
+  AccessRequestRecord,
 } from '../types';
 import { compressImageDataUrl, sanitizeFirestoreId } from '../utils/image';
 import {
@@ -53,6 +54,58 @@ function safeCoord(val: unknown): number | null {
   if (val === null || val === undefined || val === '') return null;
   const n = Number(val);
   return Number.isFinite(n) ? n : null;
+}
+
+function asOptStr(val: unknown, maxLen: number): string | undefined {
+  if (val === null || val === undefined) return undefined;
+  return String(val).slice(0, maxLen);
+}
+
+function asMap(val: unknown): Record<string, any> | undefined {
+  if (!val || typeof val !== 'object' || Array.isArray(val)) return undefined;
+  return val as Record<string, any>;
+}
+
+function normalizeDiaperSize(val: unknown): 'S' | 'M' | 'L' | 'XL' | 'XXL' | 'NONE' {
+  const s = typeof val === 'string' ? val.toUpperCase().trim() : '';
+  if (s === 'S' || s === 'M' || s === 'L' || s === 'XL' || s === 'XXL' || s === 'NONE') {
+    return s;
+  }
+  return 'NONE';
+}
+
+function normalizeWaterSize(val: unknown): '1.5L' | '600ML' | 'NONE' {
+  const s = typeof val === 'string' ? val.toUpperCase().trim() : '';
+  if (s === '1.5L' || s === '600ML' || s === 'NONE') {
+    return s;
+  }
+  return '1.5L';
+}
+
+function normalizeMobility(val: unknown): 'bedridden' | 'semi_bedridden' | 'can_walk' {
+  if (val === 'bedridden' || val === 'semi_bedridden' || val === 'can_walk') return val;
+  return 'bedridden';
+}
+
+function normalizePatientStatus(
+  val: unknown
+): 'active' | 'pending' | 'deceased' | 'moved' | 'rejected' {
+  if (
+    val === 'active' ||
+    val === 'pending' ||
+    val === 'deceased' ||
+    val === 'moved' ||
+    val === 'rejected'
+  ) {
+    return val;
+  }
+  return 'active';
+}
+
+function emailsNeedBackfill(existingEmails: unknown, targetEmails: string[]): boolean {
+  if (!Array.isArray(existingEmails)) return true;
+  const existingSet = new Set(existingEmails.map((e) => String(e).trim().toLowerCase()));
+  return targetEmails.some((e) => !existingSet.has(e.trim().toLowerCase()));
 }
 
 export function normalizeAuthorizedEmails(
@@ -231,28 +284,40 @@ function serializePatientParent(
   const id = sanitizeFirestoreId(patient.id, 'pt');
   const nowIso = new Date().toISOString();
 
+  const safeStatusHistory = Array.isArray(patient.statusHistory)
+    ? patient.statusHistory
+        .filter((h): h is NonNullable<typeof h> => Boolean(h && typeof h === 'object' && !Array.isArray(h)))
+        .slice(-50)
+    : undefined;
+
+  const safeSpecialNeeds = Array.isArray(patient.specialNeeds)
+    ? patient.specialNeeds.map((x) => String(x || '')).filter(Boolean).slice(0, 20)
+    : [];
+
+  const qrRaw = typeof patient.qrCodeDataUrl === 'string' ? patient.qrCodeDataUrl : '';
+
   const payload: Record<string, any> = {
     id,
     ownerUid,
     ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
-    code: (patient.code || `BDC-${id}`).slice(0, 40),
+    code: ((patient.code || '').trim() || `BDC-${id}`).slice(0, 40),
     admissionDate: (patient.admissionDate || nowIso.slice(0, 10)).slice(0, 32),
-    status: patient.status || 'active',
-    statusReason: patient.statusReason !== undefined ? String(patient.statusReason).slice(0, 1000) : undefined,
-    statusHistory: Array.isArray(patient.statusHistory) ? patient.statusHistory.slice(-50) : undefined,
+    status: normalizePatientStatus(patient.status),
+    statusReason: asOptStr(patient.statusReason, 1000),
+    statusHistory: safeStatusHistory,
     nationalId: (patient.nationalId || '').slice(0, 30),
     title: (patient.title || '').slice(0, 30),
-    fullName: (patient.fullName || 'ไม่ระบุชื่อ').slice(0, 200),
-    birthDate: patient.birthDate !== undefined ? String(patient.birthDate).slice(0, 32) : undefined,
+    fullName: ((patient.fullName || '').trim() || 'ไม่ระบุชื่อ').slice(0, 200),
+    birthDate: asOptStr(patient.birthDate, 32),
     age: safeNum(patient.age, 0),
     gender: patient.gender === 'หญิง' ? 'หญิง' : 'ชาย',
     phone: (patient.phone || '').slice(0, 50),
     caregiverName: (patient.caregiverName || '').slice(0, 200),
     caregiverRelation: (patient.caregiverRelation || '').slice(0, 100),
     caregiverPhone: (patient.caregiverPhone || '').slice(0, 50),
-    idAddress: patient.idAddress,
+    idAddress: asMap(patient.idAddress),
     isSameAddress: Boolean(patient.isSameAddress),
-    currentAddress: patient.currentAddress,
+    currentAddress: asMap(patient.currentAddress),
     latitude: safeCoord(patient.latitude),
     longitude: safeCoord(patient.longitude),
     ...(typeof patient.locationAccuracy === 'number' && Number.isFinite(patient.locationAccuracy)
@@ -260,15 +325,12 @@ function serializePatientParent(
       : {}),
     landmarkNote: (patient.landmarkNote || '').slice(0, 1000),
     googleMapsUrl: (patient.googleMapsUrl || '').slice(0, 500),
-    qrCodeDataUrl:
-      patient.qrCodeDataUrl && patient.qrCodeDataUrl.length <= 40000
-        ? patient.qrCodeDataUrl
-        : '',
-    mobilityLevel: patient.mobilityLevel || 'bedridden',
+    qrCodeDataUrl: qrRaw.length <= 40000 ? qrRaw : '',
+    mobilityLevel: normalizeMobility(patient.mobilityLevel),
     chronicDiseases: (patient.chronicDiseases || '').slice(0, 1000),
     symptomsDetail: (patient.symptomsDetail || '').slice(0, 2000),
-    disabilityCard: patient.disabilityCard,
-    specialNeeds: Array.isArray(patient.specialNeeds) ? patient.specialNeeds.slice(0, 20) : [],
+    disabilityCard: asMap(patient.disabilityCard),
+    specialNeeds: safeSpecialNeeds,
     familyMembersTotal: safeNum(patient.familyMembersTotal, 0),
     familyMembersMale: safeNum(patient.familyMembersMale, 0),
     familyMembersFemale: safeNum(patient.familyMembersFemale, 0),
@@ -278,31 +340,43 @@ function serializePatientParent(
     incomeStateWelfare: safeNum(patient.incomeStateWelfare, 0),
     incomeOther: safeNum(patient.incomeOther, 0),
     expenseRentHouse:
-      patient.expenseRentHouse !== undefined ? safeNum(patient.expenseRentHouse, 0) : undefined,
+      patient.expenseRentHouse !== undefined && patient.expenseRentHouse !== null
+        ? safeNum(patient.expenseRentHouse, 0)
+        : undefined,
     expenseRentLand:
-      patient.expenseRentLand !== undefined ? safeNum(patient.expenseRentLand, 0) : undefined,
+      patient.expenseRentLand !== undefined && patient.expenseRentLand !== null
+        ? safeNum(patient.expenseRentLand, 0)
+        : undefined,
     expenseLiving:
-      patient.expenseLiving !== undefined ? safeNum(patient.expenseLiving, 0) : undefined,
+      patient.expenseLiving !== undefined && patient.expenseLiving !== null
+        ? safeNum(patient.expenseLiving, 0)
+        : undefined,
     expenseMedicalTravel:
-      patient.expenseMedicalTravel !== undefined ? safeNum(patient.expenseMedicalTravel, 0) : undefined,
+      patient.expenseMedicalTravel !== undefined && patient.expenseMedicalTravel !== null
+        ? safeNum(patient.expenseMedicalTravel, 0)
+        : undefined,
     expenseDebt:
-      patient.expenseDebt !== undefined ? safeNum(patient.expenseDebt, 0) : undefined,
+      patient.expenseDebt !== undefined && patient.expenseDebt !== null
+        ? safeNum(patient.expenseDebt, 0)
+        : undefined,
     expenseOther:
-      patient.expenseOther !== undefined ? safeNum(patient.expenseOther, 0) : undefined,
+      patient.expenseOther !== undefined && patient.expenseOther !== null
+        ? safeNum(patient.expenseOther, 0)
+        : undefined,
     monthlyExpense: safeNum(patient.monthlyExpense, 0),
     netIncome: safeNum(patient.netIncome, 0),
     economicNote: (patient.economicNote || '').slice(0, 1000),
     helpCashEnabled: Boolean(patient.helpCashEnabled),
     helpCashAmount: safeNum(patient.helpCashAmount, 0),
-    helpDiaperSize: patient.helpDiaperSize || 'NONE',
+    helpDiaperSize: normalizeDiaperSize(patient.helpDiaperSize),
     helpDiaperPacks: safeNum(patient.helpDiaperPacks, 0),
     helpRicePacks: safeNum(patient.helpRicePacks, 0),
-    helpWaterSize: patient.helpWaterSize || '1.5L',
+    helpWaterSize: normalizeWaterSize(patient.helpWaterSize),
     helpWaterPacks: safeNum(patient.helpWaterPacks, 0),
     helpOtherSupplies: (patient.helpOtherSupplies || '').slice(0, 500),
     vulnerabilityScore: safeNum(patient.vulnerabilityScore, 0),
     vulnerabilityLevel: (patient.vulnerabilityLevel || '').slice(0, 100),
-    dimensionScores: patient.dimensionScores,
+    dimensionScores: asMap(patient.dimensionScores),
     socialWorkerOpinion: (patient.socialWorkerOpinion || '').slice(0, 3000),
     aiSuggestions: (patient.aiSuggestions || '').slice(0, 3000),
     interviewerName: (patient.interviewerName || '').slice(0, 200),
@@ -311,8 +385,8 @@ function serializePatientParent(
     approverPosition: (patient.approverPosition || '').slice(0, 200),
     presidentName: (patient.presidentName || '').slice(0, 200),
     presidentPosition: (patient.presidentPosition || '').slice(0, 200),
-    createdAt: (patient.createdAt || nowIso).slice(0, 64),
-    updatedAt: (patient.updatedAt || nowIso).slice(0, 64),
+    createdAt: ((patient.createdAt || '').trim() || nowIso).slice(0, 64),
+    updatedAt: ((patient.updatedAt || '').trim() || nowIso).slice(0, 64),
     serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   };
@@ -329,7 +403,7 @@ async function serializeDeliveryDoc(
   isUpdate?: boolean
 ) {
   const id = sanitizeFirestoreId(delivery.id, 'del');
-  let safePhotoUrl = delivery.photoUrl;
+  let safePhotoUrl = typeof delivery.photoUrl === 'string' ? delivery.photoUrl : undefined;
   if (safePhotoUrl && safePhotoUrl.startsWith('data:image/') && safePhotoUrl.length > 480000) {
     safePhotoUrl = await compressImageDataUrl(safePhotoUrl, {
       maxWidth: 900,
@@ -338,7 +412,7 @@ async function serializeDeliveryDoc(
       maxDataUrlLength: 470000,
     });
   }
-  if (safePhotoUrl && safePhotoUrl.length > 500000) {
+  if (!safePhotoUrl || safePhotoUrl.length > 500000) {
     safePhotoUrl = undefined;
   }
 
@@ -347,21 +421,21 @@ async function serializeDeliveryDoc(
     patientId,
     ownerUid,
     ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
-    deliveryDate: (delivery.deliveryDate || new Date().toISOString().slice(0, 10)).slice(0, 32),
+    deliveryDate: ((delivery.deliveryDate || '').trim() || new Date().toISOString().slice(0, 10)).slice(0, 32),
     monthYearLabel: (delivery.monthYearLabel || '').slice(0, 80),
     cashAmount: safeNum(delivery.cashAmount, 0),
     cashGiven: Boolean(delivery.cashGiven),
-    diaperSize: delivery.diaperSize || 'NONE',
+    diaperSize: normalizeDiaperSize(delivery.diaperSize),
     diaperPacks: safeNum(delivery.diaperPacks, 0),
     ricePacks: safeNum(delivery.ricePacks, 0),
     waterPacks: safeNum(delivery.waterPacks, 0),
-    waterSize: delivery.waterSize || '1.5L',
+    waterSize: normalizeWaterSize(delivery.waterSize),
     otherItems: (delivery.otherItems || '').slice(0, 500),
-    receivedBy: (delivery.receivedBy || 'ผู้ป่วย/ผู้ดูแล').slice(0, 200),
+    receivedBy: ((delivery.receivedBy || '').trim() || 'ผู้ป่วย/ผู้ดูแล').slice(0, 200),
     recipientRelation: (delivery.recipientRelation || '').slice(0, 100),
     officerName: (delivery.officerName || '').slice(0, 200),
     photoUrl: safePhotoUrl,
-    notes: (delivery.notes || '').slice(0, 500),
+    notes: asOptStr(delivery.notes, 500),
     serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
@@ -388,7 +462,7 @@ async function serializeMediaDoc(
   isUpdate?: boolean
 ) {
   const id = sanitizeFirestoreId(media.id, kind === 'photo' ? 'photo' : 'doc');
-  let safeDataUrl = media.dataUrl || '';
+  let safeDataUrl = typeof media.dataUrl === 'string' ? media.dataUrl : '';
   if (safeDataUrl.startsWith('data:image/') && safeDataUrl.length > 820000) {
     safeDataUrl = await compressImageDataUrl(safeDataUrl, {
       maxWidth: 1100,
@@ -407,15 +481,15 @@ async function serializeMediaDoc(
     ownerUid,
     ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
     kind,
-    category: media.category?.slice(0, 64),
-    title: media.title?.slice(0, 200),
-    fileName: media.fileName?.slice(0, 255),
-    fileType: media.fileType?.slice(0, 120),
+    category: asOptStr(media.category, 64),
+    title: asOptStr(media.title, 200),
+    fileName: asOptStr(media.fileName, 255),
+    fileType: asOptStr(media.fileType, 120),
     dataUrl: safeDataUrl,
     fileSize: typeof media.fileSize === 'number' && Number.isFinite(media.fileSize) ? media.fileSize : undefined,
-    caption: media.caption?.slice(0, 500),
-    timestamp: media.timestamp?.slice(0, 100),
-    uploadDate: media.uploadDate?.slice(0, 64),
+    caption: asOptStr(media.caption, 500),
+    timestamp: asOptStr(media.timestamp, 100),
+    uploadDate: asOptStr(media.uploadDate, 64),
     serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
@@ -430,17 +504,24 @@ function serializeFuneralParent(
 ) {
   const id = sanitizeFirestoreId(record.id, 'funeral');
   const nowIso = new Date().toISOString();
+  const safeStatus =
+    record.status === 'pending' ||
+    record.status === 'approved' ||
+    record.status === 'completed' ||
+    record.status === 'rejected'
+      ? record.status
+      : 'pending';
 
   return stripUndefined({
     id,
     ownerUid,
     ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
-    code: (record.code || `ศพ-${id}`).slice(0, 40),
+    code: ((record.code || '').trim() || `ศพ-${id}`).slice(0, 40),
     applicationDate: (record.applicationDate || nowIso.slice(0, 10)).slice(0, 32),
-    status: record.status || 'pending',
-    statusNote: record.statusNote !== undefined ? String(record.statusNote).slice(0, 1000) : undefined,
+    status: safeStatus,
+    statusNote: asOptStr(record.statusNote, 1000),
     deceasedTitle: (record.deceasedTitle || '').slice(0, 30),
-    deceasedName: (record.deceasedName || 'ไม่ระบุชื่อ').slice(0, 200),
+    deceasedName: ((record.deceasedName || '').trim() || 'ไม่ระบุชื่อ').slice(0, 200),
     deceasedNationalId: (record.deceasedNationalId || '').slice(0, 30),
     deceasedAge: safeNum(record.deceasedAge, 0),
     deceasedDeathDate: (record.deceasedDeathDate || '').slice(0, 32),
@@ -449,7 +530,7 @@ function serializeFuneralParent(
     deathPlace: (record.deathPlace || '').slice(0, 300),
     deceasedAddress: (record.deceasedAddress || '').slice(0, 500),
     applicantTitle: (record.applicantTitle || '').slice(0, 30),
-    applicantName: (record.applicantName || 'ไม่ระบุชื่อ').slice(0, 200),
+    applicantName: ((record.applicantName || '').trim() || 'ไม่ระบุชื่อ').slice(0, 200),
     applicantNationalId: (record.applicantNationalId || '').slice(0, 30),
     applicantPhone: (record.applicantPhone || '').slice(0, 50),
     applicantRelation: (record.applicantRelation || '').slice(0, 100),
@@ -466,12 +547,12 @@ function serializeFuneralParent(
     officerId: (record.officerId || '').slice(0, 128),
     officerName: (record.officerName || '').slice(0, 200),
     officerPosition: (record.officerPosition || '').slice(0, 200),
-    approverId: record.approverId !== undefined ? String(record.approverId).slice(0, 128) : undefined,
+    approverId: asOptStr(record.approverId, 128),
     approverName: (record.approverName || '').slice(0, 200),
     approverPosition: (record.approverPosition || '').slice(0, 200),
-    approvalDate: record.approvalDate !== undefined ? String(record.approvalDate).slice(0, 32) : undefined,
-    createdAt: (record.createdAt || nowIso).slice(0, 64),
-    updatedAt: (record.updatedAt || nowIso).slice(0, 64),
+    approvalDate: asOptStr(record.approvalDate, 32),
+    createdAt: ((record.createdAt || '').trim() || nowIso).slice(0, 64),
+    updatedAt: ((record.updatedAt || '').trim() || nowIso).slice(0, 64),
     serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
@@ -486,22 +567,32 @@ function serializeDonationParent(
 ) {
   const id = sanitizeFirestoreId(record.id, 'donation');
   const nowIso = new Date().toISOString();
+  const safeStatus =
+    record.status === 'completed' || record.status === 'pending' || record.status === 'cancelled'
+      ? record.status
+      : 'completed';
+  const safeRecipientType =
+    record.recipientType === 'individual' || record.recipientType === 'government'
+      ? record.recipientType
+      : 'individual';
 
-  const safeOtherItems = (record.otherItems || []).slice(0, 30).map((item) => ({
-    id: String(item.id || ''),
-    name: String(item.name || '').slice(0, 200),
-    quantity: safeNum(item.quantity, 0),
-    unit: String(item.unit || '').slice(0, 40),
-  }));
+  const safeOtherItems = Array.isArray(record.otherItems)
+    ? record.otherItems.slice(0, 30).map((item) => ({
+        id: String(item?.id || ''),
+        name: String(item?.name || '').slice(0, 200),
+        quantity: safeNum(item?.quantity, 0),
+        unit: String(item?.unit || '').slice(0, 40),
+      }))
+    : [];
 
   return stripUndefined({
     id,
     ownerUid,
     ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
-    code: (record.code || `บริจาค-${id}`).slice(0, 40),
+    code: ((record.code || '').trim() || `บริจาค-${id}`).slice(0, 40),
     distributionDate: (record.distributionDate || nowIso.slice(0, 10)).slice(0, 32),
-    status: record.status || 'completed',
-    recipientType: record.recipientType || 'individual',
+    status: safeStatus,
+    recipientType: safeRecipientType,
     individualTitle: (record.individualTitle || '').slice(0, 30),
     individualName: (record.individualName || '').slice(0, 200),
     individualNationalId: (record.individualNationalId || '').slice(0, 30),
@@ -534,8 +625,8 @@ function serializeDonationParent(
     officerPosition: (record.officerPosition || '').slice(0, 200),
     approverName: (record.approverName || '').slice(0, 200),
     approverPosition: (record.approverPosition || '').slice(0, 200),
-    createdAt: (record.createdAt || nowIso).slice(0, 64),
-    updatedAt: (record.updatedAt || nowIso).slice(0, 64),
+    createdAt: ((record.createdAt || '').trim() || nowIso).slice(0, 64),
+    updatedAt: ((record.updatedAt || '').trim() || nowIso).slice(0, 64),
     serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
@@ -946,7 +1037,8 @@ export async function saveDeliveryPlanSettingsToCloud(
 
 export async function fetchWorkspaceAuthorizedEmails(user: User): Promise<string[]> {
   try {
-    const snap = await getDoc(doc(db, 'settings', 'workspace'));
+    const ref = doc(db, 'settings', 'workspace');
+    const snap = await getDoc(ref);
     if (snap.exists()) {
       const data = snap.data();
       if (Array.isArray(data.authorizedEmails)) {
@@ -954,6 +1046,18 @@ export async function fetchWorkspaceAuthorizedEmails(user: User): Promise<string
         saveStoredAuthorizedEmails(clean);
         return clean;
       }
+    } else if (isSuperAdminUser(user)) {
+      const initial = normalizeAuthorizedEmails([], user);
+      await setDoc(ref, {
+        id: 'workspace',
+        authorizedEmails: initial,
+        updatedAt: new Date().toISOString(),
+        updatedBy: (user.email || '').slice(0, 200),
+        serverCreatedAt: serverTimestamp(),
+        serverUpdatedAt: serverTimestamp(),
+      });
+      saveStoredAuthorizedEmails(initial);
+      return initial;
     }
   } catch {
     // Non-authorized or non-existent workspace config falls back gracefully
@@ -1045,6 +1149,159 @@ export async function saveWorkspaceAuthorizedEmails(
     return normalized;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'settings/workspace');
+    throw err;
+  }
+}
+
+// ============================================================================
+// Cross-Device Team Access Requests (/access_requests/{uid})
+// ============================================================================
+
+export async function submitAccessRequest(user: User, note?: string): Promise<void> {
+  const uid = sanitizeFirestoreId(user.uid, 'uid');
+  const ref = doc(db, 'access_requests', uid);
+  try {
+    const snap = await getDoc(ref);
+    const existingData = snap.exists() ? snap.data() : null;
+    await setDoc(
+      ref,
+      stripUndefined({
+        uid,
+        email: (user.email || '').trim().toLowerCase().slice(0, 200),
+        displayName: (user.displayName || user.email || 'ผู้ใช้งาน BD-Care').slice(0, 200),
+        note: (note || 'ขอสิทธิ์เข้าดูและแก้ไขข้อมูล BD-Care จากอุปกรณ์อื่น').slice(0, 300),
+        status: 'pending',
+        ...(existingData?.reviewedBy ? { reviewedBy: existingData.reviewedBy } : {}),
+        serverCreatedAt: existingData?.serverCreatedAt || serverTimestamp(),
+        serverUpdatedAt: serverTimestamp(),
+      })
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `access_requests/${uid}`);
+    throw err;
+  }
+}
+
+export function subscribeToMyAccessRequest(
+  user: User,
+  onUpdate: (req: AccessRequestRecord | null) => void
+): () => void {
+  const uid = sanitizeFirestoreId(user.uid, 'uid');
+  return onSnapshot(
+    doc(db, 'access_requests', uid),
+    (snap) => {
+      if (!snap.exists()) {
+        onUpdate(null);
+        return;
+      }
+      const d = snap.data();
+      onUpdate({
+        uid: d.uid || uid,
+        email: d.email || '',
+        displayName: d.displayName,
+        note: d.note,
+        status: d.status || 'pending',
+        reviewedBy: d.reviewedBy,
+      });
+    },
+    () => {
+      onUpdate(null);
+    }
+  );
+}
+
+export function subscribeToPendingAccessRequests(
+  user: User,
+  onRequests: (reqs: AccessRequestRecord[]) => void
+): () => void {
+  if (!isSuperAdminUser(user)) {
+    onRequests([]);
+    return () => {};
+  }
+  return onSnapshot(
+    collection(db, 'access_requests'),
+    (snap) => {
+      const pending: AccessRequestRecord[] = [];
+      snap.forEach((d) => {
+        const val = d.data();
+        if (val.status === 'pending' && val.email) {
+          pending.push({
+            uid: val.uid || d.id,
+            email: val.email,
+            displayName: val.displayName,
+            note: val.note,
+            status: val.status,
+            reviewedBy: val.reviewedBy,
+          });
+        }
+      });
+      onRequests(pending);
+    },
+    () => {
+      onRequests([]);
+    }
+  );
+}
+
+export async function approveAccessRequest(
+  req: AccessRequestRecord,
+  adminUser: User,
+  currentTeamEmails: string[]
+): Promise<string[]> {
+  if (!isSuperAdminUser(adminUser)) {
+    throw new Error('เฉพาะ Super Admin เท่านั้นที่อนุมัติคำขอได้');
+  }
+  const targetUid = sanitizeFirestoreId(req.uid, 'uid');
+  const adminRef = doc(db, 'admins', targetUid);
+  const reqRef = doc(db, 'access_requests', targetUid);
+
+  try {
+    // 1. Grant officer entry in /admins/{uid}
+    const existingAdmin = await getDoc(adminRef);
+    await setDoc(adminRef, {
+      uid: targetUid,
+      email: req.email.trim().toLowerCase().slice(0, 200),
+      displayName: (req.displayName || req.email).slice(0, 200),
+      role: 'officer',
+      serverCreatedAt: existingAdmin.exists()
+        ? existingAdmin.data().serverCreatedAt
+        : serverTimestamp(),
+      serverUpdatedAt: serverTimestamp(),
+    });
+
+    // 2. Mark request approved
+    await updateDoc(reqRef, {
+      status: 'approved',
+      reviewedBy: (adminUser.email || '').slice(0, 200),
+      serverUpdatedAt: serverTimestamp(),
+    });
+
+    // 3. Add to workspace allowlist and propagate across ALL records & subcollections
+    const updatedEmails = await saveWorkspaceAuthorizedEmails(
+      [...currentTeamEmails, req.email],
+      adminUser
+    );
+    return updatedEmails;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `access_requests/${targetUid}`);
+    throw err;
+  }
+}
+
+export async function rejectAccessRequest(
+  req: AccessRequestRecord,
+  adminUser: User
+): Promise<void> {
+  if (!isSuperAdminUser(adminUser)) return;
+  const targetUid = sanitizeFirestoreId(req.uid, 'uid');
+  try {
+    await updateDoc(doc(db, 'access_requests', targetUid), {
+      status: 'rejected',
+      reviewedBy: (adminUser.email || '').slice(0, 200),
+      serverUpdatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `access_requests/${targetUid}`);
     throw err;
   }
 }
@@ -1437,11 +1694,13 @@ export async function syncLocalRecordsToCloud(
   localDonations: DonationDistributionRecord[],
   localDeliverySettings?: DeliveryPlanSettings,
   teamEmails: string[] = []
-): Promise<{ uploaded: number; deleted: number }> {
+): Promise<{ uploaded: number; deleted: number; failed: number }> {
   let uploaded = 0;
   let deleted = 0;
+  let failed = 0;
   const superAdmin = isSuperAdminUser(user);
   const userEmail = (user.email || '').toLowerCase();
+  const normalizedTeamEmails = normalizeAuthorizedEmails(teamEmails, superAdmin ? user : null);
   const pendingOps = getPendingOps();
   const knownSynced = getKnownSyncedIds();
 
@@ -1453,6 +1712,7 @@ export async function syncLocalRecordsToCloud(
       removeKnownSyncedId('funerals', id);
       deleted++;
     } catch (err) {
+      failed++;
       console.warn(`Pending funeral delete ${id} failed:`, err);
     }
   }
@@ -1463,11 +1723,12 @@ export async function syncLocalRecordsToCloud(
       removeKnownSyncedId('donations', id);
       deleted++;
     } catch (err) {
+      failed++;
       console.warn(`Pending donation delete ${id} failed:`, err);
     }
   }
 
-  // 2. Fetch existing Cloud timestamps
+  // 2. Fetch existing Cloud timestamps & inspect shared team allowlists
   const [pSnap, fSnap, dSnap] = await Promise.all([
     getDocs(
       superAdmin
@@ -1487,10 +1748,40 @@ export async function syncLocalRecordsToCloud(
   ]);
 
   const cloudPatientTimes = new Map<string, number>();
-  pSnap.forEach((d) => {
+  for (const d of pSnap.docs) {
     const data = d.data();
     cloudPatientTimes.set(d.id, Date.parse(data.updatedAt || data.createdAt || '') || 0);
-  });
+    if (superAdmin && emailsNeedBackfill(data.authorizedEmails, normalizedTeamEmails)) {
+      try {
+        await updateDoc(d.ref, {
+          authorizedEmails: normalizedTeamEmails,
+          serverUpdatedAt: serverTimestamp(),
+        });
+        const [delSnap, mediaSnap] = await Promise.all([
+          getDocs(collection(db, 'patients', d.id, 'deliveries')),
+          getDocs(collection(db, 'patients', d.id, 'media')),
+        ]);
+        for (const sub of delSnap.docs) {
+          if (emailsNeedBackfill(sub.data().authorizedEmails, normalizedTeamEmails)) {
+            await updateDoc(sub.ref, {
+              authorizedEmails: normalizedTeamEmails,
+              serverUpdatedAt: serverTimestamp(),
+            });
+          }
+        }
+        for (const sub of mediaSnap.docs) {
+          if (emailsNeedBackfill(sub.data().authorizedEmails, normalizedTeamEmails)) {
+            await updateDoc(sub.ref, {
+              authorizedEmails: normalizedTeamEmails,
+              serverUpdatedAt: serverTimestamp(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`Backfill patient ${d.id} emails skipped:`, err);
+      }
+    }
+  }
 
   const uploadedPatientIds: string[] = [];
   const pendingPatientSet = new Set(pendingOps.upserts.patients);
@@ -1509,23 +1800,43 @@ export async function syncLocalRecordsToCloud(
 
     if (shouldUpload) {
       try {
-        await savePatientToCloud(pt, user, teamEmails);
+        await savePatientToCloud(pt, user, normalizedTeamEmails);
         clearPendingUpsert('patients', pt.id);
         clearPendingUpsert('patients', safeId);
         addKnownSyncedIds('patients', [pt.id, safeId]);
         uploadedPatientIds.push(pt.id, safeId);
         uploaded++;
       } catch (err) {
+        failed++;
         console.warn(`Failed syncing patient ${pt.id}:`, err);
       }
     }
   }
 
   const cloudFuneralTimes = new Map<string, number>();
-  fSnap.forEach((d) => {
+  for (const d of fSnap.docs) {
     const data = d.data();
     cloudFuneralTimes.set(d.id, Date.parse(data.updatedAt || data.createdAt || '') || 0);
-  });
+    if (superAdmin && emailsNeedBackfill(data.authorizedEmails, normalizedTeamEmails)) {
+      try {
+        await updateDoc(d.ref, {
+          authorizedEmails: normalizedTeamEmails,
+          serverUpdatedAt: serverTimestamp(),
+        });
+        const mediaSnap = await getDocs(collection(db, 'funerals', d.id, 'media'));
+        for (const sub of mediaSnap.docs) {
+          if (emailsNeedBackfill(sub.data().authorizedEmails, normalizedTeamEmails)) {
+            await updateDoc(sub.ref, {
+              authorizedEmails: normalizedTeamEmails,
+              serverUpdatedAt: serverTimestamp(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`Backfill funeral ${d.id} emails skipped:`, err);
+      }
+    }
+  }
 
   const uploadedFuneralIds: string[] = [];
   const pendingFuneralSet = new Set(pendingOps.upserts.funerals);
@@ -1544,23 +1855,43 @@ export async function syncLocalRecordsToCloud(
 
     if (shouldUpload) {
       try {
-        await saveFuneralToCloud(f, user, teamEmails);
+        await saveFuneralToCloud(f, user, normalizedTeamEmails);
         clearPendingUpsert('funerals', f.id);
         clearPendingUpsert('funerals', safeId);
         addKnownSyncedIds('funerals', [f.id, safeId]);
         uploadedFuneralIds.push(f.id, safeId);
         uploaded++;
       } catch (err) {
+        failed++;
         console.warn(`Failed syncing funeral ${f.id}:`, err);
       }
     }
   }
 
   const cloudDonationTimes = new Map<string, number>();
-  dSnap.forEach((d) => {
+  for (const d of dSnap.docs) {
     const data = d.data();
     cloudDonationTimes.set(d.id, Date.parse(data.updatedAt || data.createdAt || '') || 0);
-  });
+    if (superAdmin && emailsNeedBackfill(data.authorizedEmails, normalizedTeamEmails)) {
+      try {
+        await updateDoc(d.ref, {
+          authorizedEmails: normalizedTeamEmails,
+          serverUpdatedAt: serverTimestamp(),
+        });
+        const mediaSnap = await getDocs(collection(db, 'donations', d.id, 'media'));
+        for (const sub of mediaSnap.docs) {
+          if (emailsNeedBackfill(sub.data().authorizedEmails, normalizedTeamEmails)) {
+            await updateDoc(sub.ref, {
+              authorizedEmails: normalizedTeamEmails,
+              serverUpdatedAt: serverTimestamp(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`Backfill donation ${d.id} emails skipped:`, err);
+      }
+    }
+  }
 
   const uploadedDonationIds: string[] = [];
   const pendingDonationSet = new Set(pendingOps.upserts.donations);
@@ -1579,30 +1910,41 @@ export async function syncLocalRecordsToCloud(
 
     if (shouldUpload) {
       try {
-        await saveDonationToCloud(don, user, teamEmails);
+        await saveDonationToCloud(don, user, normalizedTeamEmails);
         clearPendingUpsert('donations', don.id);
         clearPendingUpsert('donations', safeId);
         addKnownSyncedIds('donations', [don.id, safeId]);
         uploadedDonationIds.push(don.id, safeId);
         uploaded++;
       } catch (err) {
+        failed++;
         console.warn(`Failed syncing donation ${don.id}:`, err);
       }
     }
   }
 
-  // 3. Sync delivery plan settings if pending or not yet in Cloud
+  // 3. Sync delivery plan settings if pending, missing in Cloud, or missing authorizedEmails
   if (localDeliverySettings) {
     try {
-      const dpSnap = await getDoc(doc(db, 'settings', 'delivery_plan'));
+      const dpRef = doc(db, 'settings', 'delivery_plan');
+      const dpSnap = await getDoc(dpRef);
       if (
         pendingOps.upserts.deliverySettings ||
         (!dpSnap.exists() &&
           (localDeliverySettings.ricePricePerBag > 0 || localDeliverySettings.customRiceCount !== null))
       ) {
-        await saveDeliveryPlanSettingsToCloud(localDeliverySettings, user, teamEmails);
+        await saveDeliveryPlanSettingsToCloud(localDeliverySettings, user, normalizedTeamEmails);
         setPendingDeliverySettings(false);
         uploaded++;
+      } else if (
+        superAdmin &&
+        dpSnap.exists() &&
+        emailsNeedBackfill(dpSnap.data().authorizedEmails, normalizedTeamEmails)
+      ) {
+        await updateDoc(dpRef, {
+          authorizedEmails: normalizedTeamEmails,
+          serverUpdatedAt: serverTimestamp(),
+        });
       }
     } catch (err) {
       console.warn('Delivery plan settings sync skipped:', err);
@@ -1614,5 +1956,5 @@ export async function syncLocalRecordsToCloud(
   addKnownSyncedIds('funerals', [...cloudFuneralTimes.keys(), ...uploadedFuneralIds]);
   addKnownSyncedIds('donations', [...cloudDonationTimes.keys(), ...uploadedDonationIds]);
 
-  return { uploaded, deleted };
+  return { uploaded, deleted, failed };
 }

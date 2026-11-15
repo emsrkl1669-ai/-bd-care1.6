@@ -27,6 +27,7 @@ import {
   PatientRecord,
   FuneralAssistanceRecord,
   DonationDistributionRecord,
+  AccessRequestRecord,
 } from '../types';
 import {
   exportToCsv,
@@ -62,6 +63,12 @@ interface HeaderProps {
   onManualCloudSync?: () => void;
   externalLoginOpen?: boolean;
   onExternalLoginClose?: () => void;
+  myAccessRequest?: AccessRequestRecord | null;
+  isSubmittingRequest?: boolean;
+  onSubmitAccessRequest?: (note?: string) => Promise<void>;
+  pendingAccessRequests?: AccessRequestRecord[];
+  onApproveAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
+  onRejectAccessRequest?: (req: AccessRequestRecord) => Promise<void>;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -85,6 +92,12 @@ export const Header: React.FC<HeaderProps> = ({
   onManualCloudSync,
   externalLoginOpen = false,
   onExternalLoginClose,
+  myAccessRequest = null,
+  isSubmittingRequest = false,
+  onSubmitAccessRequest,
+  pendingAccessRequests = [],
+  onApproveAccessRequest,
+  onRejectAccessRequest,
 }) => {
   const { showToast } = useUiFeedback();
   const [isAdminDropdownOpen, setIsAdminDropdownOpen] = useState(false);
@@ -300,8 +313,20 @@ export const Header: React.FC<HeaderProps> = ({
                 <Cloud className="w-3 h-3 text-emerald-600" />
               )}
               <span className="hidden sm:inline">
-                {cloudStatus === 'syncing' ? 'กำลังซิงค์...' : 'Cloud ซิงค์แล้ว'}
+                {cloudStatus === 'syncing'
+                  ? 'กำลังซิงค์...'
+                  : cloudErrorReason === 'permission-denied'
+                  ? 'รอสิทธิ์เข้าใช้งาน'
+                  : 'Cloud ซิงค์แล้ว'}
               </span>
+              {pendingAccessRequests.length > 0 && (
+                <span
+                  className="ml-0.5 px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[10px] font-bold"
+                  title={`มีคำขอสิทธิ์จากอุปกรณ์อื่น ${pendingAccessRequests.length} รายการ`}
+                >
+                  {pendingAccessRequests.length}
+                </span>
+              )}
             </button>
           ) : (
             <button
@@ -545,6 +570,12 @@ export const Header: React.FC<HeaderProps> = ({
         onCloudSignIn={onCloudSignIn}
         onCloudSignOut={onCloudSignOut}
         onManualCloudSync={onManualCloudSync}
+        myAccessRequest={myAccessRequest}
+        isSubmittingRequest={isSubmittingRequest}
+        onSubmitAccessRequest={onSubmitAccessRequest}
+        pendingAccessRequests={pendingAccessRequests}
+        onApproveAccessRequest={onApproveAccessRequest}
+        onRejectAccessRequest={onRejectAccessRequest}
       />
     </header>
   );

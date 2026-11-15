@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
-import { Cloud, CloudOff, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Cloud, CloudOff, AlertTriangle, RefreshCw, UserPlus, Check, Clock } from 'lucide-react';
 import {
   ADMIN_USERS,
   AdminUser,
@@ -11,6 +11,7 @@ import {
   FuneralAssistanceRecord,
   DonationDistributionRecord,
   DeliveryPlanSettings,
+  AccessRequestRecord,
 } from './types';
 import {
   getStoredPatients,
@@ -53,6 +54,8 @@ import { formatThaiDate } from './utils/idCard';
 import { sanitizeFirestoreId } from './utils/image';
 import {
   SUPER_ADMIN_EMAIL,
+  isSuperAdminUser,
+  getAuthSignInErrorMessage,
   subscribeToAuth,
   testFirestoreConnection,
   signInWithGoogle,
@@ -73,6 +76,11 @@ import {
   saveDeliveryPlanSettingsToCloud,
   fetchWorkspaceAuthorizedEmails,
   saveWorkspaceAuthorizedEmails,
+  submitAccessRequest,
+  subscribeToMyAccessRequest,
+  subscribeToPendingAccessRequests,
+  approveAccessRequest,
+  rejectAccessRequest,
 } from './services/firestoreSync';
 
 function AppContent() {
@@ -97,6 +105,11 @@ function AppContent() {
   const [cloudStatus, setCloudStatus] = useState<'disconnected' | 'syncing' | 'synced' | 'error'>('disconnected');
   const [cloudErrorReason, setCloudErrorReason] = useState<'permission-denied' | 'network' | null>(null);
   const [initialCloudLoaded, setInitialCloudLoaded] = useState<boolean>(false);
+  const [cloudRefreshNonce, setCloudRefreshNonce] = useState<number>(0);
+  const [myAccessRequest, setMyAccessRequest] = useState<AccessRequestRecord | null>(null);
+  const [pendingAccessRequests, setPendingAccessRequests] = useState<AccessRequestRecord[]>([]);
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState<boolean>(false);
+  const [processingReqUid, setProcessingReqUid] = useState<string | null>(null);
 
   // Refs for latest state inside async callbacks
   const patientsRef = useRef<PatientRecord[]>(patients);
@@ -105,6 +118,7 @@ function AppContent() {
   const deliverySettingsRef = useRef<DeliveryPlanSettings>(deliverySettings);
   const authorizedEmailsRef = useRef<string[]>(authorizedEmails);
   const deliverySyncTimerRef = useRef<number | null>(null);
+  const autoReloadedApprovalRef = useRef<boolean>(false);
 
   useEffect(() => {
     patientsRef.current = patients;
@@ -193,7 +207,13 @@ function AppContent() {
         );
         if (cancelled) return;
 
-        if (migration.uploaded > 0 || migration.deleted > 0) {
+        if (migration.failed > 0) {
+          setCloudStatus('error');
+          showToast(
+            `ซิงค์ขึ้น Cloud ไม่สำเร็จ ${migration.failed} รายการ ระบบจะลองซิงค์ใหม่อัตโนมัติ`,
+            'warning'
+          );
+        } else if (migration.uploaded > 0 || migration.deleted > 0) {
           showToast(
             `ซิงค์ข้อมูลกับ Cloud Firestore สำเร็จ (อัปโหลด ${migration.uploaded} / ลบ ${migration.deleted} รายการ)`,
             'success'
@@ -337,7 +357,40 @@ function AppContent() {
       unsubAuth();
       if (unsubCloud) unsubCloud();
     };
-  }, [showToast]);
+  }, [showToast, cloudRefreshNonce]);
+
+  // Subscribe to cross-device access request status (requester vs Super Admin)
+  useEffect(() => {
+    if (!firebaseUser) {
+      setMyAccessRequest(null);
+      setPendingAccessRequests([]);
+      autoReloadedApprovalRef.current = false;
+      return;
+    }
+    if (isSuperAdminUser(firebaseUser)) {
+      setMyAccessRequest(null);
+      return subscribeToPendingAccessRequests(firebaseUser, (reqs) => {
+        setPendingAccessRequests(reqs);
+      });
+    }
+    setPendingAccessRequests([]);
+    return subscribeToMyAccessRequest(firebaseUser, (req) => {
+      setMyAccessRequest(req);
+    });
+  }, [firebaseUser]);
+
+  // Automatically unlock & reload cloud data as soon as Super Admin approves this device
+  useEffect(() => {
+    if (!firebaseUser || myAccessRequest?.status !== 'approved') {
+      autoReloadedApprovalRef.current = false;
+      return;
+    }
+    if (cloudErrorReason === 'permission-denied' && !autoReloadedApprovalRef.current) {
+      autoReloadedApprovalRef.current = true;
+      showToast('ผู้ดูแลระบบอนุมัติสิทธิ์แล้ว กำลังโหลดข้อมูลทั้งหมดจาก Cloud...', 'success');
+      setCloudRefreshNonce((n) => n + 1);
+    }
+  }, [firebaseUser, myAccessRequest?.status, cloudErrorReason, showToast]);
 
   // Auto-flush queued offline operations whenever network connection returns
   useEffect(() => {
@@ -363,13 +416,21 @@ function AppContent() {
       authorizedEmailsRef.current
     )
       .then((res) => {
-        setCloudStatus('synced');
-        setCloudErrorReason(null);
-        if (res.uploaded > 0 || res.deleted > 0) {
+        if (res.failed > 0) {
+          setCloudStatus('error');
           showToast(
-            `ซิงค์รายการที่ค้างอยู่ขึ้น Cloud สำเร็จ (${res.uploaded + res.deleted} รายการ)`,
-            'success'
+            `ซิงค์รายการที่ค้างอยู่ไม่สำเร็จ ${res.failed} รายการ ระบบจะลองซิงค์ใหม่อัตโนมัติ`,
+            'warning'
           );
+        } else {
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+          if (res.uploaded > 0 || res.deleted > 0) {
+            showToast(
+              `ซิงค์รายการที่ค้างอยู่ขึ้น Cloud สำเร็จ (${res.uploaded + res.deleted} รายการ)`,
+              'success'
+            );
+          }
         }
       })
       .catch(() => {
@@ -382,8 +443,9 @@ function AppContent() {
       const user = await signInWithGoogle();
       showToast(`เชื่อมต่อ Cloud สำเร็จ: ${user.email || user.displayName}`, 'success');
     } catch (err: any) {
-      if (err?.code !== 'auth/popup-closed-by-user') {
-        showToast('ไม่สามารถเชื่อมต่อบัญชี Google ได้ กรุณาลองใหม่อีกครั้ง', 'error');
+      const msg = getAuthSignInErrorMessage(err);
+      if (msg) {
+        showToast(msg, 'error');
       }
     }
   }, [showToast]);
@@ -416,14 +478,22 @@ function AppContent() {
         deliverySettingsRef.current,
         teamEmails
       );
-      setCloudStatus('synced');
-      setCloudErrorReason(null);
-      showToast(
-        res.uploaded > 0 || res.deleted > 0
-          ? `ซิงค์ข้อมูลกับ Cloud สำเร็จ (อัปโหลด ${res.uploaded} / ลบ ${res.deleted} รายการ)`
-          : 'ข้อมูลทั้งหมดตรงกับฐานข้อมูล Cloud แล้ว',
-        'success'
-      );
+      if (res.failed > 0) {
+        setCloudStatus('error');
+        showToast(
+          `ซิงค์ไม่สำเร็จ ${res.failed} รายการ ระบบจะลองซิงค์ใหม่อัตโนมัติ`,
+          'warning'
+        );
+      } else {
+        setCloudStatus('synced');
+        setCloudErrorReason(null);
+        showToast(
+          res.uploaded > 0 || res.deleted > 0
+            ? `ซิงค์ข้อมูลกับ Cloud สำเร็จ (อัปโหลด ${res.uploaded} / ลบ ${res.deleted} รายการ)`
+            : 'ข้อมูลทั้งหมดตรงกับฐานข้อมูล Cloud แล้ว',
+          'success'
+        );
+      }
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
       const isPerm =
@@ -432,7 +502,7 @@ function AppContent() {
       setCloudErrorReason(isPerm ? 'permission-denied' : 'network');
       showToast(
         isPerm
-          ? 'บัญชี Google นี้ยังไม่ได้รับสิทธิ์เข้าถึงข้อมูลกลาง กรุณาใช้บัญชีหลักหรือติดต่อผู้ดูแลระบบ'
+          ? 'บัญชี Google นี้ยังไม่ได้รับสิทธิ์เข้าถึงข้อมูลกลาง กรุณาใช้บัญชีหลักหรือกดส่งคำขอสิทธิ์'
           : 'ไม่สามารถซิงค์ข้อมูลขึ้น Cloud ได้ในขณะนี้ ข้อมูลยังคงถูกบันทึกไว้ในเครื่อง',
         isPerm ? 'error' : 'warning'
       );
@@ -446,6 +516,60 @@ function AppContent() {
       setAuthorizedEmails(updated);
       authorizedEmailsRef.current = updated;
       showToast('อัปเดตรายชื่อบัญชีที่ใช้งานข้ามเครื่องสำเร็จแล้ว', 'success');
+    },
+    [firebaseUser, showToast]
+  );
+
+  const handleSubmitAccessRequest = useCallback(
+    async (note?: string) => {
+      if (!firebaseUser) return;
+      setIsSubmittingRequest(true);
+      try {
+        await submitAccessRequest(firebaseUser, note);
+        showToast('ส่งคำขอสิทธิ์เข้าใช้งานแล้ว กรุณารอผู้ดูแลระบบอนุมัติ', 'success');
+      } catch {
+        showToast('ไม่สามารถส่งคำขอสิทธิ์ได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง', 'error');
+      } finally {
+        setIsSubmittingRequest(false);
+      }
+    },
+    [firebaseUser, showToast]
+  );
+
+  const handleApproveAccessRequest = useCallback(
+    async (req: AccessRequestRecord) => {
+      if (!firebaseUser) return;
+      setProcessingReqUid(req.uid);
+      try {
+        const updated = await approveAccessRequest(
+          req,
+          firebaseUser,
+          authorizedEmailsRef.current
+        );
+        setAuthorizedEmails(updated);
+        authorizedEmailsRef.current = updated;
+        showToast(`อนุมัติสิทธิ์ให้ ${req.email} และซิงค์ข้อมูลทุกชุดเรียบร้อยแล้ว`, 'success');
+      } catch {
+        showToast(`ไม่สามารถอนุมัติสิทธิ์ให้ ${req.email} ได้`, 'error');
+      } finally {
+        setProcessingReqUid(null);
+      }
+    },
+    [firebaseUser, showToast]
+  );
+
+  const handleRejectAccessRequest = useCallback(
+    async (req: AccessRequestRecord) => {
+      if (!firebaseUser) return;
+      setProcessingReqUid(req.uid);
+      try {
+        await rejectAccessRequest(req, firebaseUser);
+        showToast(`ปฏิเสธคำขอของ ${req.email} แล้ว`, 'info');
+      } catch {
+        showToast('ไม่สามารถปฏิเสธคำขอได้', 'error');
+      } finally {
+        setProcessingReqUid(null);
+      }
     },
     [firebaseUser, showToast]
   );
@@ -861,7 +985,7 @@ function AppContent() {
     if (firebaseUser) {
       setCloudStatus('syncing');
       try {
-        await syncLocalRecordsToCloud(
+        const res = await syncLocalRecordsToCloud(
           firebaseUser,
           nextPatients,
           nextFunerals,
@@ -869,8 +993,16 @@ function AppContent() {
           deliverySettingsRef.current,
           authorizedEmailsRef.current
         );
-        setCloudStatus('synced');
-        showToast('นำเข้าและซิงค์ข้อมูลสำรองขึ้น Cloud สำเร็จแล้ว', 'success');
+        if (res.failed > 0) {
+          setCloudStatus('error');
+          showToast(
+            `นำเข้าแล้ว แต่ซิงค์ขึ้น Cloud ไม่สำเร็จ ${res.failed} รายการ ระบบจะลองซิงค์ใหม่อัตโนมัติ`,
+            'warning'
+          );
+        } else {
+          setCloudStatus('synced');
+          showToast('นำเข้าและซิงค์ข้อมูลสำรองขึ้น Cloud สำเร็จแล้ว', 'success');
+        }
       } catch {
         setCloudStatus('error');
       }
@@ -937,6 +1069,12 @@ function AppContent() {
         onManualCloudSync={handleManualCloudSync}
         externalLoginOpen={isCloudModalOpen}
         onExternalLoginClose={() => setIsCloudModalOpen(false)}
+        myAccessRequest={myAccessRequest}
+        isSubmittingRequest={isSubmittingRequest}
+        onSubmitAccessRequest={handleSubmitAccessRequest}
+        pendingAccessRequests={pendingAccessRequests}
+        onApproveAccessRequest={handleApproveAccessRequest}
+        onRejectAccessRequest={handleRejectAccessRequest}
       />
 
       {/* Main Content Areas */}
@@ -954,7 +1092,7 @@ function AppContent() {
                     เครื่องนี้ยังไม่ได้เชื่อมต่อฐานข้อมูลกลาง Cloud Firestore
                   </div>
                   <p className="text-amber-800 mt-0.5 leading-relaxed">
-                    หากต้องการให้ข้อมูลผู้ป่วย คำร้องเผาศพ แผนส่งมอบ และสิ่งของบริจาคแสดงผลตรงกันและแก้ไขร่วมกันได้ทุกเครื่อง กรุณาเข้าสู่ระบบด้วยบัญชี Google ({SUPER_ADMIN_EMAIL} หรือบัญชีทีมที่ได้รับอนุญาต)
+                    หากต้องการให้ข้อมูลผู้ป่วย คำร้องเผาศพ แผนส่งมอบ และสิ่งของบริจาคแสดงผลตรงกันและแก้ไขร่วมกันได้ทุกเครื่อง กรุณาเชื่อมต่อด้วยบัญชี Google ({SUPER_ADMIN_EMAIL} หรือบัญชีทีมงาน และสามารถกดส่งคำขอสิทธิ์จากอุปกรณ์นี้ได้ทันที)
                   </p>
                 </div>
               </div>
@@ -981,18 +1119,87 @@ function AppContent() {
                   <div className="font-bold text-sm">
                     บัญชี {firebaseUser.email} ยังไม่ได้รับสิทธิ์เข้าถึงฐานข้อมูลกลาง
                   </div>
-                  <p className="text-red-800 mt-0.5 leading-relaxed">
-                    กรุณาสลับไปใช้บัญชีหลัก ({SUPER_ADMIN_EMAIL}) หรือให้ผู้ดูแลระบบเพิ่มอีเมลนี้ในหน้าจัดการสิทธิ์ Cloud
-                  </p>
+                  {myAccessRequest?.status === 'pending' ? (
+                    <p className="text-amber-800 font-semibold mt-0.5 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>ส่งคำขอสิทธิ์แล้ว กำลังรอผู้ดูแลระบบ ({SUPER_ADMIN_EMAIL}) อนุมัติ — หน้าจอจะโหลดข้อมูลทั้งหมดให้อัตโนมัติทันที</span>
+                    </p>
+                  ) : (
+                    <p className="text-red-800 mt-0.5 leading-relaxed">
+                      กดปุ่ม "ส่งคำขอสิทธิ์เข้าใช้งาน" เพื่อให้ผู้ดูแลระบบอนุมัติได้ทันที หรือสลับไปใช้บัญชีหลัก ({SUPER_ADMIN_EMAIL})
+                    </p>
+                  )}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsCloudModalOpen(true)}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer shrink-0"
-              >
-                สลับบัญชี / จัดการสิทธิ์ Cloud
-              </button>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {myAccessRequest?.status !== 'pending' && (
+                  <button
+                    type="button"
+                    disabled={isSubmittingRequest}
+                    onClick={() => handleSubmitAccessRequest()}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>
+                      {isSubmittingRequest ? 'กำลังส่งคำขอ...' : 'ส่งคำขอสิทธิ์เข้าใช้งาน'}
+                    </span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsCloudModalOpen(true)}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                >
+                  สลับบัญชีหลัก
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {firebaseUser && isSuperAdminUser(firebaseUser) && pendingAccessRequests.length > 0 && (
+          <div className="no-print max-w-7xl mx-auto px-3 sm:px-4 pt-4">
+            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3.5 sm:p-4 space-y-2.5 shadow-xs">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-950">
+                <UserPlus className="w-4 h-4 text-amber-700 shrink-0" />
+                <span>
+                  มีอุปกรณ์อื่นขอสิทธิ์เข้าดูและแก้ไขข้อมูล BD-Care ({pendingAccessRequests.length} รายการ)
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {pendingAccessRequests.map((req) => (
+                  <div
+                    key={req.uid}
+                    className="bg-white border border-amber-200 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-bold text-slate-900 truncate">
+                        {req.displayName || req.email}
+                      </div>
+                      <div className="font-mono text-[11px] text-slate-600 truncate">{req.email}</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        disabled={processingReqUid === req.uid}
+                        onClick={() => handleApproveAccessRequest(req)}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>อนุมัติทันที</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={processingReqUid === req.uid}
+                        onClick={() => handleRejectAccessRequest(req)}
+                        className="px-2.5 py-1.5 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-lg font-semibold cursor-pointer"
+                      >
+                        ปฏิเสธ
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}

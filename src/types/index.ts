@@ -513,3 +513,12 @@ export interface PendingOpsState {
   };
 }
 
+export interface AccessRequestRecord {
+  uid: string;
+  email: string;
+  displayName?: string;
+  note?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewedBy?: string;
+}
+

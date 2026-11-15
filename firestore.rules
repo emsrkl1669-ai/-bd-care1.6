@@ -111,6 +111,53 @@ service cloud.firestore {
       allow delete: if isSuperAdmin() && isValidId(uid);
     }
 
+    // 4A. Cross-Device Access Requests
+    function isValidAccessRequest(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'status', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'note', 'status', 'reviewedBy', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == uid &&
+        isStr(data.email, 200) &&
+        isOptStr(data, 'displayName', 200) &&
+        isOptStr(data, 'note', 300) &&
+        data.status in ['pending', 'approved', 'rejected'] &&
+        isOptStr(data, 'reviewedBy', 200) &&
+        data.serverCreatedAt is timestamp &&
+        data.serverUpdatedAt is timestamp;
+    }
+
+    match /access_requests/{uid} {
+      allow get: if isValidId(uid) && isSignedIn() && (request.auth.uid == uid || isSuperAdmin());
+      allow list: if isSuperAdmin();
+      allow create: if isSignedIn() &&
+        isValidId(uid) &&
+        request.auth.uid == uid &&
+        isValidAccessRequest(incoming(), uid) &&
+        incoming().email.lower() == request.auth.token.email.lower() &&
+        incoming().status == 'pending' &&
+        incoming().serverCreatedAt == request.time &&
+        incoming().serverUpdatedAt == request.time;
+      allow update: if isSignedIn() &&
+        isValidId(uid) &&
+        isValidAccessRequest(incoming(), uid) &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().serverCreatedAt == existing().serverCreatedAt &&
+        incoming().serverUpdatedAt == request.time &&
+        (
+          (
+            isSuperAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewedBy', 'serverUpdatedAt'])
+          ) ||
+          (
+            request.auth.uid == uid &&
+            incoming().status == 'pending' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'note', 'status', 'serverUpdatedAt'])
+          )
+        );
+      allow delete: if isValidId(uid) && (isSuperAdmin() || (isSignedIn() && request.auth.uid == uid));
+    }
+
     // 4B. Shared Workspace & Delivery Plan Settings
     function isValidWorkspaceSettings(data) {
       return data.keys().hasAll(['id', 'authorizedEmails', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt']) &&
@@ -126,7 +173,7 @@ service cloud.firestore {
     }
 
     match /settings/workspace {
-      allow get: if isSuperAdmin() || isSharedTeamMember(existing());
+      allow get: if isSuperAdmin() || isStaffAdmin() || isSharedTeamMember(existing());
       allow create: if isSuperAdmin() &&
         isValidWorkspaceSettings(incoming()) &&
         incoming().serverCreatedAt == request.time &&
@@ -155,7 +202,7 @@ service cloud.firestore {
     }
 
     match /settings/delivery_plan {
-      allow get: if isSuperAdmin() || isOwner(existing()) || isSharedTeamMember(existing());
+      allow get: if isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing());
       allow create: if isSignedIn() &&
         isValidDeliveryPlanSettings(incoming()) &&
         incoming().ownerUid == request.auth.uid &&
@@ -178,7 +225,7 @@ service cloud.firestore {
         (
           isSuperAdmin() ||
           (
-            (isOwner(existing()) || isSharedTeamMember(existing())) &&
+            (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'ricePricePerBag', 'customRiceCount', 'currentMonth', 'updatedAt', 'serverUpdatedAt'
             ])
@@ -391,7 +438,7 @@ service cloud.firestore {
             ])
           )
         );
-      allow delete: if isValidId(patientId) && (isSuperAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+      allow delete: if isValidId(patientId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
 
       match /deliveries/{deliveryId} {
         allow get: if isValidId(patientId) && isValidId(deliveryId) && (
@@ -410,6 +457,7 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/patients/$(patientId)) &&
           (
             isSuperAdmin() ||
+            isStaffAdmin() ||
             get(/databases/$(database)/documents/patients/$(patientId)).data.ownerUid == request.auth.uid ||
             isSharedTeamMember(get(/databases/$(database)/documents/patients/$(patientId)).data)
           );
@@ -423,10 +471,15 @@ service cloud.firestore {
           incoming().serverCreatedAt == existing().serverCreatedAt &&
           incoming().serverUpdatedAt == request.time &&
           (isSuperAdmin() || (
-            (isOwner(existing()) || isSharedTeamMember(existing())) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'receivedBy', 'recipientRelation', 'serverUpdatedAt'])
+            (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'deliveryDate', 'monthYearLabel', 'cashAmount', 'cashGiven',
+              'diaperSize', 'diaperPacks', 'ricePacks', 'waterPacks', 'waterSize',
+              'otherItems', 'receivedBy', 'recipientRelation', 'officerName',
+              'photoUrl', 'notes', 'serverUpdatedAt'
+            ])
           ));
-        allow delete: if isValidId(patientId) && isValidId(deliveryId) && (isSuperAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+        allow delete: if isValidId(patientId) && isValidId(deliveryId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
       }
 
       match /media/{mediaId} {
@@ -446,6 +499,7 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/patients/$(patientId)) &&
           (
             isSuperAdmin() ||
+            isStaffAdmin() ||
             get(/databases/$(database)/documents/patients/$(patientId)).data.ownerUid == request.auth.uid ||
             isSharedTeamMember(get(/databases/$(database)/documents/patients/$(patientId)).data)
           );
@@ -459,10 +513,12 @@ service cloud.firestore {
           incoming().serverCreatedAt == existing().serverCreatedAt &&
           incoming().serverUpdatedAt == request.time &&
           (isSuperAdmin() || (
-            (isOwner(existing()) || isSharedTeamMember(existing())) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'serverUpdatedAt'])
+            (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'category', 'caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'timestamp', 'uploadDate', 'serverUpdatedAt'
+            ])
           ));
-        allow delete: if isValidId(patientId) && isValidId(mediaId) && (isSuperAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+        allow delete: if isValidId(patientId) && isValidId(mediaId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
       }
     }
 
@@ -548,8 +604,7 @@ service cloud.firestore {
         (
           isSuperAdmin() ||
           (
-            !(existing().status in ['completed', 'rejected']) &&
-            (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
+            (isStaffAdmin() || (!(existing().status in ['completed', 'rejected']) && (isOwner(existing()) || isSharedTeamMember(existing())))) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'code', 'applicationDate', 'status', 'statusNote',
               'deceasedTitle', 'deceasedName', 'deceasedNationalId', 'deceasedAge',
@@ -563,7 +618,7 @@ service cloud.firestore {
             ])
           )
         );
-      allow delete: if isValidId(funeralId) && (isSuperAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+      allow delete: if isValidId(funeralId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
 
       match /media/{mediaId} {
         allow get: if isValidId(funeralId) && isValidId(mediaId) && (
@@ -582,6 +637,7 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/funerals/$(funeralId)) &&
           (
             isSuperAdmin() ||
+            isStaffAdmin() ||
             get(/databases/$(database)/documents/funerals/$(funeralId)).data.ownerUid == request.auth.uid ||
             isSharedTeamMember(get(/databases/$(database)/documents/funerals/$(funeralId)).data)
           );
@@ -595,10 +651,12 @@ service cloud.firestore {
           incoming().serverCreatedAt == existing().serverCreatedAt &&
           incoming().serverUpdatedAt == request.time &&
           (isSuperAdmin() || (
-            (isOwner(existing()) || isSharedTeamMember(existing())) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'serverUpdatedAt'])
+            (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'category', 'caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'timestamp', 'uploadDate', 'serverUpdatedAt'
+            ])
           ));
-        allow delete: if isValidId(funeralId) && isValidId(mediaId) && (isSuperAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+        allow delete: if isValidId(funeralId) && isValidId(mediaId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
       }
     }
 
@@ -686,8 +744,7 @@ service cloud.firestore {
         (
           isSuperAdmin() ||
           (
-            existing().status != 'cancelled' &&
-            (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
+            (isStaffAdmin() || (existing().status != 'cancelled' && (isOwner(existing()) || isSharedTeamMember(existing())))) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'code', 'distributionDate', 'status', 'recipientType',
               'individualTitle', 'individualName', 'individualNationalId', 'individualPhone',
@@ -702,7 +759,7 @@ service cloud.firestore {
             ])
           )
         );
-      allow delete: if isValidId(donationId) && (isSuperAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+      allow delete: if isValidId(donationId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
 
       match /media/{mediaId} {
         allow get: if isValidId(donationId) && isValidId(mediaId) && (
@@ -721,6 +778,7 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/donations/$(donationId)) &&
           (
             isSuperAdmin() ||
+            isStaffAdmin() ||
             get(/databases/$(database)/documents/donations/$(donationId)).data.ownerUid == request.auth.uid ||
             isSharedTeamMember(get(/databases/$(database)/documents/donations/$(donationId)).data)
           );
@@ -734,10 +792,12 @@ service cloud.firestore {
           incoming().serverCreatedAt == existing().serverCreatedAt &&
           incoming().serverUpdatedAt == request.time &&
           (isSuperAdmin() || (
-            (isOwner(existing()) || isSharedTeamMember(existing())) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'serverUpdatedAt'])
+            (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'category', 'caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'timestamp', 'uploadDate', 'serverUpdatedAt'
+            ])
           ));
-        allow delete: if isValidId(donationId) && isValidId(mediaId) && (isSuperAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+        allow delete: if isValidId(donationId) && isValidId(mediaId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
       }
     }
   }
