@@ -326,7 +326,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
                     โครงการใจถึงใจช่วยผู้ป่วยยากไร้และติดเตียง
                   </p>
                   <p className="text-[10px] text-slate-600">
-                    เลขที่ 170/3 ถนนสุขุมวิท ตำบลปากน้ำ อำเภอเมืองสมุทรปราการ จังหวัดสมุทรปราการ 10270
+                    57/1 ซอยท้ายบ้าน 17 (ซอยมูลนิธิ) ถนนท้ายบ้าน ตำบลปากน้ำ อำเภอเมืองสมุทรปราการ จังหวัดสมุทรปราการ 10270 โทร.02 175 8668, 02 175 8789
                   </p>
                 </div>
               </div>
@@ -1136,8 +1136,8 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
                 วันที่จัดพิมพ์: <span className="font-semibold text-slate-800">{formatThaiDate(new Date().toISOString().slice(0, 10))}</span>
               </div>
             </div>
-            <div className="text-[10px] mt-2 text-slate-400">
-              ระบบฐานข้อมูลดิจิทัล BD-Care • มูลนิธิร่วมกุศลสมุทรปราการ โทร. 02-395-0118, 02-387-1111
+            <div className="text-[9.5px] mt-2 text-slate-400">
+              มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂) • 57/1 ซอยท้ายบ้าน 17 (ซอยมูลนิธิ) ถนนท้ายบ้าน ตำบลปากน้ำ อำเภอเมืองสมุทรปราการ จังหวัดสมุทรปราการ 10270 โทร.02 175 8668, 02 175 8789
             </div>
           </div>
         </div>

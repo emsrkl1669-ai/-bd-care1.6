@@ -283,18 +283,23 @@ export const PrintHouseQrLabel: React.FC<PrintHouseQrLabelProps> = ({ patient, o
             </div>
 
             {/* Emergency Hotline Banner */}
-            <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-2 border-t-2 border-blue-900 text-xs">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1 text-red-700 font-bold">
-                  <Phone className="w-3.5 h-3.5" />
-                  <span>แจ้งเหตุฉุกเฉิน/กู้ชีพ: 1669</span>
+            <div className="mt-3 pt-2 border-t-2 border-blue-900 space-y-1 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 text-red-700 font-bold">
+                    <Phone className="w-3.5 h-3.5" />
+                    <span>แจ้งเหตุฉุกเฉิน/กู้ชีพ: 1669</span>
+                  </div>
+                  <div className="text-slate-700">
+                    สำนักงานมูลนิธิฯ: <span className="font-bold">02 175 8668, 02 175 8789</span>
+                  </div>
                 </div>
-                <div className="text-slate-700">
-                  สำนักงานมูลนิธิฯ: <span className="font-bold">02-395-0919, 02-387-1111</span>
+                <div className="text-[10px] text-slate-500 font-medium">
+                  มูลนิธิร่วมกุศลสมุทรปราการ • 北欖天德善堂 (แบบ สค.04-QR A4)
                 </div>
               </div>
-              <div className="text-[10px] text-slate-500 font-medium">
-                มูลนิธิร่วมกุศลสมุทรปราการ • 北欖天德善堂 (แบบ สค.04-QR A4)
+              <div className="text-[10px] text-slate-600">
+                57/1 ซอยท้ายบ้าน 17 (ซอยมูลนิธิ) ถนนท้ายบ้าน ตำบลปากน้ำ อำเภอเมืองสมุทรปราการ จังหวัดสมุทรปราการ 10270
               </div>
             </div>
           </div>

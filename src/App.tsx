@@ -639,9 +639,11 @@ function AppContent() {
       {/* Footer */}
       <footer className="no-print bg-white border-t border-slate-200 py-3 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-left">
             <span className="font-bold text-slate-700">BD-Care</span>
-            <span>• โครงการใจถึงใจช่วยผู้ป่วยติดเตียงและยากไร้ มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂)</span>
+            <span>
+              • โครงการใจถึงใจช่วยผู้ป่วยติดเตียงและยากไร้ มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂) • 57/1 ซอยท้ายบ้าน 17 (ซอยมูลนิธิ) ถนนท้ายบ้าน ตำบลปากน้ำ อำเภอเมืองสมุทรปราการ จังหวัดสมุทรปราการ 10270 โทร.02 175 8668, 02 175 8789
+            </span>
           </div>
           <div className="text-slate-400 text-[11px]">
             ระบบแบบฟอร์ม สค.04 ดิจิทัล • เชื่อมต่อฐานข้อมูล Firebase Cloud Firestore & Local Storage

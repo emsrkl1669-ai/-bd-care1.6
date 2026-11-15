@@ -375,9 +375,9 @@ export function PrintRosterModal<T>({
                 )}
 
                 {/* Footer Watermark */}
-                <div className="flex items-center justify-between text-[9px] text-slate-500 border-t border-slate-200 pt-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 text-[8.5px] text-slate-500 border-t border-slate-200 pt-1">
                   <div>
-                    ระบบดิจิทัล BD-Care • มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂) • โทร. 02-395-0919, 02-387-1111
+                    มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂) • 57/1 ซอยท้ายบ้าน 17 (ซอยมูลนิธิ) ถนนท้ายบ้าน ต.ปากน้ำ อ.เมืองสมุทรปราการ จ.สมุทรปราการ 10270 โทร.02 175 8668, 02 175 8789
                   </div>
                   <div>
                     พิมพ์เมื่อ: {formatThaiDate(new Date().toISOString().slice(0, 10))} เวลา {new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
