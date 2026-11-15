@@ -20,11 +20,13 @@ import {
   UserPlus,
   Check,
   Clock,
+  ExternalLink,
 } from 'lucide-react';
 import { ADMIN_USERS, AdminUser, AccessRequestRecord } from '../types';
 import {
   SUPER_ADMIN_EMAIL,
   isSuperAdminUser,
+  isProviderDisabledError,
   authEmailToUsername,
   createStaffUsernameAccount,
   getAuthSignInErrorMessage,
@@ -86,6 +88,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [isSavingStaff, setIsSavingStaff] = useState(false);
   const [processingReqUid, setProcessingReqUid] = useState<string | null>(null);
   const [teamMsg, setTeamMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [showProviderLink, setShowProviderLink] = useState(false);
 
   if (!isOpen) return null;
 
@@ -101,6 +104,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
 
     setIsLoggingIn(true);
+    setShowProviderLink(false);
     try {
       if (onSwitchUserAccount) {
         await onSwitchUserAccount(cleanUser, password);
@@ -125,6 +129,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         }
       }
     } catch (err: any) {
+      setShowProviderLink(isProviderDisabledError(err));
       setErrorMsg(getAuthSignInErrorMessage(err));
     } finally {
       setIsLoggingIn(false);
@@ -170,13 +175,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         text: `สร้างบัญชี Username: ${cleanUser} และเปิดสิทธิ์บน ${firebaseConfig.projectId} เรียบร้อยแล้ว`,
       });
     } catch (err: any) {
+      setShowProviderLink(isProviderDisabledError(err));
       const code = String(err?.code || '');
       if (code === 'auth/email-already-in-use') {
         setTeamMsg({ type: 'err', text: `Username "${cleanUser}" มีอยู่ในระบบแล้ว` });
       } else {
         setTeamMsg({
           type: 'err',
-          text: err?.message || getAuthSignInErrorMessage(err),
+          text: isProviderDisabledError(err) ? getAuthSignInErrorMessage(err) : (err?.message || getAuthSignInErrorMessage(err)),
         });
       }
     } finally {
@@ -492,6 +498,23 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-start gap-2 leading-relaxed">
                 <AlertCircle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
                 <span>{errorMsg}</span>
+              </div>
+            )}
+
+            {showProviderLink && (
+              <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-950 text-xs space-y-1.5 leading-relaxed">
+                <div className="font-bold text-amber-900">
+                  กรุณาเปิดใช้งาน Email/Password ใน Firebase Console ({firebaseConfig.projectId})
+                </div>
+                <a
+                  href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-bold text-blue-700 hover:text-blue-900 underline"
+                >
+                  <span>เปิดหน้า Authentication &rarr; Sign-in method</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
               </div>
             )}
 

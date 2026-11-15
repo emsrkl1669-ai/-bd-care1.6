@@ -37,6 +37,7 @@ import {
 } from '../utils/storage';
 import { LoginModal } from './LoginModal';
 import { useUiFeedback } from './UiFeedback';
+import { firebaseConfig } from '../firebase';
 
 interface HeaderProps {
   currentTab: string;
@@ -305,7 +306,7 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'bg-red-50 text-red-700 border-red-200'
                   : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
               }`}
-              title={`ฐานข้อมูล Cloud Firestore (smart-time-ca6f9) • ผู้ใช้: ${currentAdmin.username} • คลิกเพื่อซิงค์ทันที`}
+              title={`ฐานข้อมูล Cloud Firestore (${firebaseConfig.projectId}) • ผู้ใช้: ${currentAdmin.username} • คลิกเพื่อซิงค์ทันที`}
             >
               {cloudStatus === 'syncing' ? (
                 <RefreshCw className="w-3 h-3 animate-spin text-blue-600" />

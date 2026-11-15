@@ -1,12 +1,12 @@
 {
-  "projectId": "smart-time-ca6f9",
-  "appId": "1:687202158509:web:435f119dc44b5c8bf64324",
-  "apiKey": "AIzaSyAAPOGAjz55PX-3flICGc9zg2YiVqZIQHs",
-  "authDomain": "smart-time-ca6f9.firebaseapp.com",
+  "projectId": "bd-care-fde92",
+  "appId": "1:818818571782:web:07c51f7f584692ce29ad87",
+  "apiKey": "AIzaSyD0YA1K_aoHyOoBBKFsXOgKoaBR1MRJpf0",
+  "authDomain": "bd-care-fde92.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-bdcare-651bc8b9-76a2-4332-830d-7919b38f29ac",
-  "storageBucket": "smart-time-ca6f9.firebasestorage.app",
-  "messagingSenderId": "687202158509",
+  "storageBucket": "bd-care-fde92.firebasestorage.app",
+  "messagingSenderId": "818818571782",
   "measurementId": "",
-  "oAuthClientId": "687202158509-0ra2onjtvl15933pkcgr7oflu4r7gt73.apps.googleusercontent.com",
+  "oAuthClientId": "818818571782-bjle17jf6nefpmdlud3btu3l5sihsb8u.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

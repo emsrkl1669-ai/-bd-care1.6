@@ -22,7 +22,7 @@ export const SUPER_ADMIN_EMAIL = `${SUPER_ADMIN_USERNAME.toLowerCase()}@${AUTH_E
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Connect specifically to the provisioned Cloud Firestore database ID on smart-time-ca6f9
+// Connect specifically to the provisioned Cloud Firestore database ID on bd-care-fde92
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
@@ -156,7 +156,7 @@ export function getAuthSignInErrorMessage(err: any): string {
 
 /**
  * Sign in exclusively with Username and Password via Firebase Auth.
- * Preset foundation accounts are auto-provisioned on first login in smart-time-ca6f9 if their password matches.
+ * Preset foundation accounts are auto-provisioned on first login in bd-care-fde92 if their password matches.
  */
 export async function signInWithUsernamePassword(
   username: string,
@@ -169,7 +169,7 @@ export async function signInWithUsernamePassword(
 
   const email = usernameToAuthEmail(cleanUser);
   const preset = ADMIN_USERS.find(
-    (u) => u.username.toLowerCase() === cleanUser.toLowerCase()
+    (u) => usernameToAuthEmail(u.username) === email
   );
 
   // Verify preset password strictly before touching Firebase Auth

@@ -192,7 +192,7 @@ service cloud.firestore {
     }
 
     match /settings/workspace {
-      allow get: if isSuperAdmin() || isBuiltInStaffEmail() || isStaffAdmin() || isSharedTeamMember(existing());
+      allow get: if isSuperAdmin() || isBuiltInStaffEmail() || isStaffAdmin() || (resource != null && isSharedTeamMember(existing()));
       allow create: if isSuperAdmin() &&
         isValidWorkspaceSettings(incoming()) &&
         incoming().serverCreatedAt == request.time &&
@@ -221,7 +221,7 @@ service cloud.firestore {
     }
 
     match /settings/delivery_plan {
-      allow get: if isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing());
+      allow get: if isSuperAdmin() || isStaffAdmin() || (resource == null && isAuthorizedStaff()) || (resource != null && (isOwner(existing()) || isSharedTeamMember(existing())));
       allow create: if isSignedIn() &&
         isValidDeliveryPlanSettings(incoming()) &&
         incoming().ownerUid == request.auth.uid &&
@@ -417,7 +417,7 @@ service cloud.firestore {
     }
 
     match /patients/{patientId} {
-      allow get: if isValidId(patientId) && (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+      allow get: if isValidId(patientId) && (isStaffAdmin() || (resource == null && isAuthorizedStaff()) || (resource != null && (isOwner(existing()) || isSharedTeamMember(existing()))));
       allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
       allow create: if isAuthorizedStaff() &&
         isValidId(patientId) &&
@@ -462,8 +462,8 @@ service cloud.firestore {
       match /deliveries/{deliveryId} {
         allow get: if isValidId(patientId) && isValidId(deliveryId) && (
           isStaffAdmin() ||
-          isOwner(existing()) ||
-          isSharedTeamMember(existing())
+          (resource == null && isAuthorizedStaff()) ||
+          (resource != null && (isOwner(existing()) || isSharedTeamMember(existing())))
         );
         allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
         allow create: if isSignedIn() &&
@@ -504,8 +504,8 @@ service cloud.firestore {
       match /media/{mediaId} {
         allow get: if isValidId(patientId) && isValidId(mediaId) && (
           isStaffAdmin() ||
-          isOwner(existing()) ||
-          isSharedTeamMember(existing())
+          (resource == null && isAuthorizedStaff()) ||
+          (resource != null && (isOwner(existing()) || isSharedTeamMember(existing())))
         );
         allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
         allow create: if isSignedIn() &&
@@ -604,7 +604,7 @@ service cloud.firestore {
     }
 
     match /funerals/{funeralId} {
-      allow get: if isValidId(funeralId) && (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+      allow get: if isValidId(funeralId) && (isStaffAdmin() || (resource == null && isAuthorizedStaff()) || (resource != null && (isOwner(existing()) || isSharedTeamMember(existing()))));
       allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
       allow create: if isAuthorizedStaff() &&
         isValidId(funeralId) &&
@@ -642,8 +642,8 @@ service cloud.firestore {
       match /media/{mediaId} {
         allow get: if isValidId(funeralId) && isValidId(mediaId) && (
           isStaffAdmin() ||
-          isOwner(existing()) ||
-          isSharedTeamMember(existing())
+          (resource == null && isAuthorizedStaff()) ||
+          (resource != null && (isOwner(existing()) || isSharedTeamMember(existing())))
         );
         allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
         allow create: if isSignedIn() &&
@@ -744,7 +744,7 @@ service cloud.firestore {
     }
 
     match /donations/{donationId} {
-      allow get: if isValidId(donationId) && (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+      allow get: if isValidId(donationId) && (isStaffAdmin() || (resource == null && isAuthorizedStaff()) || (resource != null && (isOwner(existing()) || isSharedTeamMember(existing()))));
       allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
       allow create: if isAuthorizedStaff() &&
         isValidId(donationId) &&
@@ -783,8 +783,8 @@ service cloud.firestore {
       match /media/{mediaId} {
         allow get: if isValidId(donationId) && isValidId(mediaId) && (
           isStaffAdmin() ||
-          isOwner(existing()) ||
-          isSharedTeamMember(existing())
+          (resource == null && isAuthorizedStaff()) ||
+          (resource != null && (isOwner(existing()) || isSharedTeamMember(existing())))
         );
         allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
         allow create: if isSignedIn() &&
