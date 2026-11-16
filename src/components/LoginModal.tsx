@@ -43,6 +43,7 @@ interface LoginModalProps {
   cloudErrorReason?: 'permission-denied' | 'network' | null;
   authorizedEmails?: string[];
   onSaveAuthorizedEmails?: (emails: string[]) => Promise<void>;
+  onRegisterCreatedStaff?: (uid: string, email: string, displayName: string) => Promise<void>;
   onSwitchUserAccount?: (username: string, password: string) => Promise<void>;
   onCloudSignOut?: () => void;
   onManualCloudSync?: () => void;
@@ -64,6 +65,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   cloudErrorReason = null,
   authorizedEmails = [SUPER_ADMIN_EMAIL],
   onSaveAuthorizedEmails,
+  onRegisterCreatedStaff,
   onSwitchUserAccount,
   onCloudSignOut,
   onManualCloudSync,
@@ -161,12 +163,16 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setIsSavingStaff(true);
     setTeamMsg(null);
     try {
-      const createdEmail = await createStaffUsernameAccount(
+      const created = await createStaffUsernameAccount(
         cleanUser,
         newStaffPassword,
         newStaffName || cleanUser
       );
-      await onSaveAuthorizedEmails([...authorizedEmails, createdEmail]);
+      if (onRegisterCreatedStaff) {
+        await onRegisterCreatedStaff(created.uid, created.email, created.displayName);
+      } else {
+        await onSaveAuthorizedEmails([...authorizedEmails, created.email]);
+      }
       setNewStaffUsername('');
       setNewStaffPassword('');
       setNewStaffName('');

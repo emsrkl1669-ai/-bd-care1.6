@@ -17,6 +17,7 @@ const LEGACY_RICE_PRICE_KEY = 'bdcare_rice_price_per_bag';
 const PENDING_OPS_KEY = 'bdcare_pending_ops_v1';
 const KNOWN_SYNCED_KEY = 'bdcare_known_synced_v1';
 const AUTHORIZED_EMAILS_KEY = 'bdcare_authorized_emails_v1';
+const LAST_AUTH_UID_KEY = 'bdcare_last_auth_uid_v1';
 
 // Empty default list - demo data removed per user request
 export const INITIAL_DEMO_PATIENTS: PatientRecord[] = [];
@@ -659,3 +660,22 @@ export function saveStoredAuthorizedEmails(emails: string[]): void {
   }
 }
 
+export function getStoredLastAuthUid(): string | null {
+  try {
+    return localStorage.getItem(LAST_AUTH_UID_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveStoredLastAuthUid(uid: string | null): void {
+  try {
+    if (!uid) {
+      localStorage.removeItem(LAST_AUTH_UID_KEY);
+    } else {
+      localStorage.setItem(LAST_AUTH_UID_KEY, uid);
+    }
+  } catch {
+    /* ignore */
+  }
+}

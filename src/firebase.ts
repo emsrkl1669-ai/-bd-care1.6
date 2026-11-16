@@ -115,6 +115,10 @@ export function isSuperAdminUser(user: User | null | undefined): boolean {
   );
 }
 
+export function isFullAccessStaffUser(user: User | null | undefined): boolean {
+  return isSuperAdminUser(user) || Boolean(findAdminUserByAuthEmail(user?.email));
+}
+
 export function isProviderDisabledError(err: any): boolean {
   const code = String(err?.code || '');
   const msg = String(err?.message || '').toLowerCase();
@@ -208,11 +212,17 @@ export async function signInWithUsernamePassword(
 /**
  * Create a new staff Username & Password account in Firebase Auth without signing out the active Admin.
  */
+export interface CreatedStaffAccount {
+  uid: string;
+  email: string;
+  displayName: string;
+}
+
 export async function createStaffUsernameAccount(
   username: string,
   password: string,
   displayName: string
-): Promise<string> {
+): Promise<CreatedStaffAccount> {
   const cleanUser = (username || '').trim();
   if (!/^[a-zA-Z0-9._-]{3,40}$/.test(cleanUser)) {
     throw new Error('Username ต้องเป็นตัวอักษรภาษาอังกฤษ ตัวเลข หรือ . _ - ความยาว 3-40 ตัวอักษร');
@@ -222,17 +232,19 @@ export async function createStaffUsernameAccount(
   }
 
   const email = usernameToAuthEmail(cleanUser);
+  const resolvedDisplayName = displayName.trim() || cleanUser;
   const appName = `staff-creator-${Date.now()}`;
   const secondaryApp = initializeApp(firebaseConfig, appName);
   const secondaryAuth = getAuth(secondaryApp);
 
   try {
     const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-    if (displayName.trim()) {
-      await updateProfile(cred.user, { displayName: displayName.trim() }).catch(() => {});
+    if (resolvedDisplayName) {
+      await updateProfile(cred.user, { displayName: resolvedDisplayName }).catch(() => {});
     }
+    const uid = cred.user.uid;
     await signOut(secondaryAuth).catch(() => {});
-    return email;
+    return { uid, email, displayName: resolvedDisplayName };
   } finally {
     await deleteApp(secondaryApp).catch(() => {});
   }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User } from 'firebase/auth';
 import {
   Users,
@@ -59,6 +59,7 @@ interface HeaderProps {
   cloudErrorReason?: 'permission-denied' | 'network' | null;
   authorizedEmails?: string[];
   onSaveAuthorizedEmails?: (emails: string[]) => Promise<void>;
+  onRegisterCreatedStaff?: (uid: string, email: string, displayName: string) => Promise<void>;
   onSwitchUserAccount?: (username: string, password: string) => Promise<void>;
   onCloudSignOut?: () => void;
   onManualCloudSync?: () => void;
@@ -88,6 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
   cloudErrorReason = null,
   authorizedEmails,
   onSaveAuthorizedEmails,
+  onRegisterCreatedStaff,
   onSwitchUserAccount,
   onCloudSignOut,
   onManualCloudSync,
@@ -104,7 +106,35 @@ export const Header: React.FC<HeaderProps> = ({
   const [isAdminDropdownOpen, setIsAdminDropdownOpen] = useState(false);
   const [isBackupMenuOpen, setIsBackupMenuOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const adminDropdownRef = useRef<HTMLDivElement>(null);
+  const backupMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node | null;
+      if (isAdminDropdownOpen && adminDropdownRef.current && target && !adminDropdownRef.current.contains(target)) {
+        setIsAdminDropdownOpen(false);
+      }
+      if (isBackupMenuOpen && backupMenuRef.current && target && !backupMenuRef.current.contains(target)) {
+        setIsBackupMenuOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsAdminDropdownOpen(false);
+        setIsBackupMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('touchstart', handleOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [isAdminDropdownOpen, isBackupMenuOpen]);
 
   const activePatientsCount = patients.filter((p) => p.status === 'active').length;
   const archivedCount = patients.filter((p) =>
@@ -172,7 +202,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <nav className="flex items-center gap-1 overflow-x-auto py-0.5">
+        <nav className="order-3 w-full lg:order-none lg:w-auto flex items-center gap-1 overflow-x-auto py-0.5 border-t border-slate-100 pt-1.5 lg:border-t-0 lg:pt-0.5">
           <button
             onClick={() => setCurrentTab('list')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
@@ -355,9 +385,12 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Authenticated User Account & Login Button */}
-          <div className="relative">
+          <div className="relative" ref={adminDropdownRef}>
             <button
-              onClick={() => setIsAdminDropdownOpen(!isAdminDropdownOpen)}
+              onClick={() => {
+                setIsBackupMenuOpen(false);
+                setIsAdminDropdownOpen(!isAdminDropdownOpen);
+              }}
               className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer border border-slate-200 text-slate-800"
               title="บัญชีผู้ใช้งานปัจจุบัน • คลิกเพื่อเข้าสู่ระบบบัญชีอื่นหรือจัดการสิทธิ์"
             >
@@ -376,7 +409,6 @@ export const Header: React.FC<HeaderProps> = ({
             {isAdminDropdownOpen && (
               <div
                 className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-50 text-slate-800"
-                onMouseLeave={() => setIsAdminDropdownOpen(false)}
               >
                 <div className="px-3.5 py-2 border-b border-slate-100 bg-slate-50">
                   <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
@@ -425,9 +457,12 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Tools Menu (CSV & Backup) */}
-          <div className="relative">
+          <div className="relative" ref={backupMenuRef}>
             <button
-              onClick={() => setIsBackupMenuOpen(!isBackupMenuOpen)}
+              onClick={() => {
+                setIsAdminDropdownOpen(false);
+                setIsBackupMenuOpen(!isBackupMenuOpen);
+              }}
               className="p-1.5 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer border border-slate-200"
               title="สำรองข้อมูล / ส่งออก Excel"
             >
@@ -437,7 +472,6 @@ export const Header: React.FC<HeaderProps> = ({
             {isBackupMenuOpen && (
               <div
                 className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-slate-700"
-                onMouseLeave={() => setIsBackupMenuOpen(false)}
               >
                 <button
                   onClick={() => {
@@ -561,6 +595,7 @@ export const Header: React.FC<HeaderProps> = ({
         cloudErrorReason={cloudErrorReason}
         authorizedEmails={authorizedEmails}
         onSaveAuthorizedEmails={onSaveAuthorizedEmails}
+        onRegisterCreatedStaff={onRegisterCreatedStaff}
         onSwitchUserAccount={onSwitchUserAccount}
         onCloudSignOut={onCloudSignOut}
         onManualCloudSync={onManualCloudSync}

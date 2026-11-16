@@ -20,6 +20,7 @@ import {
   OperationType,
   handleFirestoreError,
   isSuperAdminUser,
+  isFullAccessStaffUser,
   usernameToAuthEmail,
   findAdminUserByAuthEmail,
 } from '../firebase';
@@ -134,7 +135,7 @@ export function normalizeAuthorizedEmails(
     const uEmail = currentUser.email.trim().toLowerCase();
     if (uEmail.includes('@')) set.add(uEmail);
   }
-  return Array.from(set).slice(0, 20);
+  return Array.from(set).slice(0, 50);
 }
 
 /**
@@ -657,8 +658,9 @@ async function syncMediaSubcollection(
   documents: Array<PatientDocument | FuneralDocument | DonationDocument>
 ) {
   const superAdmin = isSuperAdminUser(user);
+  const fullAccess = isFullAccessStaffUser(user);
   const mediaCol = collection(db, collectionPath, parentId, 'media');
-  const mediaQuery = superAdmin
+  const mediaQuery = fullAccess
     ? mediaCol
     : query(mediaCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
   const existingSnap = await getDocs(mediaQuery);
@@ -736,6 +738,7 @@ export async function savePatientToCloud(
   const patientId = sanitizeFirestoreId(patient.id, 'pt');
   const patientRef = doc(db, 'patients', patientId);
   const superAdmin = isSuperAdminUser(user);
+  const fullAccess = isFullAccessStaffUser(user);
   const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
 
   try {
@@ -763,15 +766,17 @@ export async function savePatientToCloud(
 
     // Sync deliveries subcollection
     const delCol = collection(db, 'patients', patientId, 'deliveries');
-    const delQuery = superAdmin
+    const delQuery = fullAccess
       ? delCol
       : query(delCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
     const existingDelSnap = await getDocs(delQuery);
     const existingDelMap = new Map<string, any>();
     existingDelSnap.forEach((d) => existingDelMap.set(d.id, d.data()));
 
+    const desiredDelIds = new Set<string>();
     for (const del of patient.deliveries || []) {
       const delId = sanitizeFirestoreId(del.id, 'del');
+      desiredDelIds.add(delId);
       const prevDel = existingDelMap.get(delId);
       const delEmails = prevDel && !superAdmin ? prevDel.authorizedEmails : desiredEmails;
       const delPayload = await serializeDeliveryDoc(
@@ -783,6 +788,12 @@ export async function savePatientToCloud(
         Boolean(prevDel)
       );
       await setDoc(doc(db, 'patients', patientId, 'deliveries', delId), delPayload);
+    }
+
+    for (const [existingDelId] of existingDelMap.entries()) {
+      if (!desiredDelIds.has(existingDelId)) {
+        await deleteDoc(doc(db, 'patients', patientId, 'deliveries', existingDelId));
+      }
     }
 
     // Sync media subcollection (photos + documents)
@@ -919,7 +930,7 @@ export async function deleteFuneralFromCloud(id: string, user?: User | null): Pr
   try {
     const mediaCol = collection(db, 'funerals', funeralId, 'media');
     const mediaQuery =
-      !user || isSuperAdminUser(user)
+      !user || isFullAccessStaffUser(user)
         ? mediaCol
         : query(mediaCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
     const mediaSnap = await getDocs(mediaQuery);
@@ -991,7 +1002,7 @@ export async function deleteDonationFromCloud(id: string, user?: User | null): P
   try {
     const mediaCol = collection(db, 'donations', donationId, 'media');
     const mediaQuery =
-      !user || isSuperAdminUser(user)
+      !user || isFullAccessStaffUser(user)
         ? mediaCol
         : query(mediaCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
     const mediaSnap = await getDocs(mediaQuery);
@@ -1049,7 +1060,10 @@ export async function saveDeliveryPlanSettingsToCloud(
 export async function fetchWorkspaceAuthorizedEmails(user: User): Promise<string[]> {
   try {
     const ref = doc(db, 'settings', 'workspace');
-    const snap = await getDoc(ref);
+    let snap = await getDocFromServer(ref).catch(() => null);
+    if (!snap) {
+      snap = await getDoc(ref);
+    }
     if (snap.exists()) {
       const data = snap.data();
       if (Array.isArray(data.authorizedEmails)) {
@@ -1072,6 +1086,10 @@ export async function fetchWorkspaceAuthorizedEmails(user: User): Promise<string
     }
   } catch {
     // Non-authorized or non-existent workspace config falls back gracefully
+  }
+  const cached = getStoredAuthorizedEmailsFromLocal();
+  if (cached.length > 0) {
+    return normalizeAuthorizedEmails(cached, isSuperAdminUser(user) ? user : null);
   }
   return normalizeAuthorizedEmails([], isSuperAdminUser(user) ? user : null);
 }
@@ -1137,6 +1155,35 @@ function getStoredAuthorizedEmailsFromLocal(): string[] {
   }
 }
 
+export async function registerStaffAdminMember(
+  uid: string,
+  email: string,
+  displayName: string,
+  adminUser: User
+): Promise<void> {
+  if (!isSuperAdminUser(adminUser)) {
+    throw new Error('เฉพาะ Super Admin เท่านั้นที่สามารถเพิ่มบัญชีเจ้าหน้าที่ได้');
+  }
+  const cleanUid = sanitizeFirestoreId(uid, 'uid');
+  const adminRef = doc(db, 'admins', cleanUid);
+  try {
+    const existingAdmin = await getDoc(adminRef);
+    await setDoc(adminRef, {
+      uid: cleanUid,
+      email: email.trim().toLowerCase().slice(0, 200),
+      displayName: (displayName || email).trim().slice(0, 200),
+      role: 'officer',
+      serverCreatedAt: existingAdmin.exists()
+        ? existingAdmin.data().serverCreatedAt
+        : serverTimestamp(),
+      serverUpdatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `admins/${cleanUid}`);
+    throw err;
+  }
+}
+
 /**
  * Super Admin: Update authorized staff email allowlist and propagate to all existing Cloud docs
  * so authorized staff devices immediately see and edit identical data.
@@ -1149,6 +1196,7 @@ export async function saveWorkspaceAuthorizedEmails(
     throw new Error('เฉพาะ Super Admin เท่านั้นที่สามารถจัดการสิทธิ์บัญชีร่วมกันได้');
   }
   const normalized = normalizeAuthorizedEmails(emails, user);
+  const normalizedSet = new Set(normalized.map((e) => e.toLowerCase()));
   const ref = doc(db, 'settings', 'workspace');
   try {
     const snap = await getDoc(ref);
@@ -1162,6 +1210,24 @@ export async function saveWorkspaceAuthorizedEmails(
       serverUpdatedAt: serverTimestamp(),
     });
     saveStoredAuthorizedEmails(normalized);
+
+    // Revoke /admins/{uid} entries for removed custom accounts
+    try {
+      const adminsSnap = await getDocs(collection(db, 'admins'));
+      for (const aDoc of adminsSnap.docs) {
+        const aEmail = String(aDoc.data().email || '').trim().toLowerCase();
+        if (
+          aEmail &&
+          aEmail !== SUPER_ADMIN_EMAIL.toLowerCase() &&
+          !findAdminUserByAuthEmail(aEmail) &&
+          !normalizedSet.has(aEmail)
+        ) {
+          await deleteDoc(aDoc.ref);
+        }
+      }
+    } catch (adminCleanupErr) {
+      console.warn('Admin directory cleanup skipped:', adminCleanupErr);
+    }
 
     // Propagate updated authorizedEmails to delivery_plan and existing records + subcollections
     const dpRef = doc(db, 'settings', 'delivery_plan');
@@ -1388,17 +1454,17 @@ async function hydratePatient(
   fallbackLocal?: PatientRecord
 ): Promise<PatientRecord> {
   const patientId = raw.id;
-  const superAdmin = isSuperAdminUser(user);
+  const fullAccess = isFullAccessStaffUser(user);
   const userEmail = (user.email || '').toLowerCase();
 
-  const delQuery = superAdmin
+  const delQuery = fullAccess
     ? collection(db, 'patients', patientId, 'deliveries')
     : query(
         collection(db, 'patients', patientId, 'deliveries'),
         where('authorizedEmails', 'array-contains', userEmail)
       );
 
-  const mediaQuery = superAdmin
+  const mediaQuery = fullAccess
     ? collection(db, 'patients', patientId, 'media')
     : query(
         collection(db, 'patients', patientId, 'media'),
@@ -1491,9 +1557,9 @@ async function hydrateFuneral(
   fallbackLocal?: FuneralAssistanceRecord
 ): Promise<FuneralAssistanceRecord> {
   const funeralId = raw.id;
-  const superAdmin = isSuperAdminUser(user);
+  const fullAccess = isFullAccessStaffUser(user);
   const userEmail = (user.email || '').toLowerCase();
-  const mediaQuery = superAdmin
+  const mediaQuery = fullAccess
     ? collection(db, 'funerals', funeralId, 'media')
     : query(
         collection(db, 'funerals', funeralId, 'media'),
@@ -1537,9 +1603,9 @@ async function hydrateDonation(
   fallbackLocal?: DonationDistributionRecord
 ): Promise<DonationDistributionRecord> {
   const donationId = raw.id;
-  const superAdmin = isSuperAdminUser(user);
+  const fullAccess = isFullAccessStaffUser(user);
   const userEmail = (user.email || '').toLowerCase();
-  const mediaQuery = superAdmin
+  const mediaQuery = fullAccess
     ? collection(db, 'donations', donationId, 'media')
     : query(
         collection(db, 'donations', donationId, 'media'),
@@ -1610,16 +1676,16 @@ export function subscribeToCloudCollections(
     onError?: (err: CloudErrorDetail) => void;
   }
 ): () => void {
-  const superAdmin = isSuperAdminUser(user);
+  const fullAccess = isFullAccessStaffUser(user);
   const userEmail = (user.email || '').toLowerCase();
 
-  const patientsQuery = superAdmin
+  const patientsQuery = fullAccess
     ? collection(db, 'patients')
     : query(collection(db, 'patients'), where('authorizedEmails', 'array-contains', userEmail));
-  const funeralsQuery = superAdmin
+  const funeralsQuery = fullAccess
     ? collection(db, 'funerals')
     : query(collection(db, 'funerals'), where('authorizedEmails', 'array-contains', userEmail));
-  const donationsQuery = superAdmin
+  const donationsQuery = fullAccess
     ? collection(db, 'donations')
     : query(collection(db, 'donations'), where('authorizedEmails', 'array-contains', userEmail));
 
@@ -1771,8 +1837,9 @@ export async function syncLocalRecordsToCloud(
   let deleted = 0;
   let failed = 0;
   const superAdmin = isSuperAdminUser(user);
+  const fullAccess = isFullAccessStaffUser(user);
   const userEmail = (user.email || '').toLowerCase();
-  const normalizedTeamEmails = normalizeAuthorizedEmails(teamEmails, superAdmin ? user : null);
+  const normalizedTeamEmails = normalizeAuthorizedEmails(teamEmails, user);
   const pendingOps = getPendingOps();
   const knownSynced = getKnownSyncedIds();
 
@@ -1803,17 +1870,17 @@ export async function syncLocalRecordsToCloud(
   // 2. Fetch existing Cloud timestamps & inspect shared team allowlists
   const [pSnap, fSnap, dSnap] = await Promise.all([
     getDocs(
-      superAdmin
+      fullAccess
         ? collection(db, 'patients')
         : query(collection(db, 'patients'), where('authorizedEmails', 'array-contains', userEmail))
     ),
     getDocs(
-      superAdmin
+      fullAccess
         ? collection(db, 'funerals')
         : query(collection(db, 'funerals'), where('authorizedEmails', 'array-contains', userEmail))
     ),
     getDocs(
-      superAdmin
+      fullAccess
         ? collection(db, 'donations')
         : query(collection(db, 'donations'), where('authorizedEmails', 'array-contains', userEmail))
     ),

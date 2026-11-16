@@ -116,8 +116,14 @@ export function PrintRosterModal<T>({
   };
 
   const renderSignatures = () => (
-    <div className="signature-block-keep mt-4 pt-3 border-t-2 border-slate-900 space-y-2">
-      <div className="grid grid-cols-2 gap-8 text-center">
+    <div className="signature-block-keep mt-3 space-y-2.5">
+      {/* Summary Count Attached Directly at End of Table */}
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-100 border border-slate-900 px-3 py-1.5 text-[10.5px] font-bold text-slate-900">
+        <span>สรุปรายงาน {documentCode}</span>
+        <span>จำนวนทั้งหมด {items.length} รายการ</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-8 text-center pt-1">
         {/* Left: Officer Signature */}
         <div className="space-y-1 p-2.5 bg-slate-50/80 rounded border border-slate-200">
           <div className="text-[11px] font-bold text-slate-900">
@@ -172,9 +178,9 @@ export function PrintRosterModal<T>({
         isLandscape ? 'is-landscape' : ''
       } fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4`}
     >
-      {/* Dynamic Landscape @page directive while open in Landscape mode */}
+      {/* Dynamic Landscape @page directive with 0.5-inch (12.7mm) margins on all pages */}
       {isLandscape && (
-        <style>{`@media print { @page { size: A4 landscape; margin: 0; } }`}</style>
+        <style>{`@media print { @page { size: A4 landscape; margin: 12.7mm; } }`}</style>
       )}
 
       {/* Top Floating Control Bar - Hidden when printing */}
@@ -329,8 +335,10 @@ export function PrintRosterModal<T>({
             <div
               key={pageIdx}
               className={`a4-sheet ${
-                isLandscape ? 'a4-sheet-landscape' : 'a4-sheet-compact flex flex-col justify-between'
-              } bg-white text-slate-900 shadow-2xl relative py-[10mm] px-[12mm] border border-slate-300 font-['Sarabun',sans-serif] ${
+                isLandscape
+                  ? 'a4-sheet-landscape p-[12.7mm] print:p-0'
+                  : 'a4-sheet-compact flex flex-col justify-between py-[10mm] px-[12mm]'
+              } bg-white text-slate-900 shadow-2xl relative border border-slate-300 font-['Sarabun',sans-serif] ${
                 isHiddenOnScreen ? 'hidden print:flex' : isLandscape ? 'block' : 'flex'
               } ${isLastPage ? 'last-sheet' : ''}`}
             >
@@ -361,20 +369,26 @@ export function PrintRosterModal<T>({
                     <div className="inline-block border border-slate-900 rounded px-2.5 py-0.5 text-[10px] font-bold text-slate-900 bg-slate-50">
                       {documentCode}
                     </div>
-                    <div className="text-[10px] text-slate-600 font-mono mt-1">
-                      {isLandscape
-                        ? `จำนวนทั้งหมด ${items.length} รายการ`
-                        : `หน้า ${pageIdx + 1} จาก ${totalPages}`}
-                    </div>
-                    <div className="text-[10px] text-slate-600">
+                    {!isLandscape && (
+                      <div className="text-[10px] text-slate-600 font-mono mt-1">
+                        หน้า {pageIdx + 1} จาก {totalPages}
+                      </div>
+                    )}
+                    <div className="text-[10px] text-slate-600 mt-1">
                       วันที่ออกรายงาน: {formatThaiDate(new Date().toISOString().slice(0, 10))}
                     </div>
                   </div>
                 </div>
 
-                {/* Integrated Summary Strip directly above the table */}
+                {/* Integrated Summary Strip ONLY below Page 1 Header */}
                 {pageIdx === 0 && summaryItems && summaryItems.length > 0 && (
-                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center text-[10.5px] border border-blue-200 bg-blue-50/60 p-2 rounded-lg">
+                  <div
+                    className={`grid ${
+                      summaryItems.length <= 5
+                        ? 'grid-cols-2 sm:grid-cols-5'
+                        : 'grid-cols-3 sm:grid-cols-6'
+                    } gap-2 text-center text-[10.5px] border border-blue-200 bg-blue-50/60 p-2 rounded-lg`}
+                  >
                     {summaryItems.map((s, idx) => (
                       <div
                         key={idx}
@@ -392,10 +406,10 @@ export function PrintRosterModal<T>({
                   </div>
                 )}
 
-                {/* Data Table */}
-                <div className="border border-slate-900 rounded overflow-hidden">
+                {/* Data Table (NO overflow-hidden so multi-page print rows never merge/clip) */}
+                <div className="border border-slate-900 print:border-0">
                   <table
-                    className={`w-full text-left border-collapse ${
+                    className={`w-full text-left border-collapse border border-slate-900 ${
                       hasExplicitColWidths || isLandscape ? 'table-fixed' : ''
                     } text-[10px] leading-[1.3]`}
                   >
@@ -409,14 +423,14 @@ export function PrintRosterModal<T>({
                     )}
                     <thead>
                       <tr className="bg-slate-900 text-white font-bold text-center border-b border-slate-900">
-                        <th className="py-1.5 px-1.5 border-r border-slate-700 whitespace-nowrap">
+                        <th className="py-1.5 px-1 border border-slate-700 whitespace-nowrap">
                           ลำดับ
                         </th>
                         {columns.map((col, cIdx) => (
                           <th
                             key={cIdx}
-                            className={`py-1.5 px-2 ${col.width || ''} ${
-                              cIdx < columns.length - 1 ? 'border-r border-slate-700' : ''
+                            className={`py-1.5 px-1.5 border border-slate-700 ${col.width || ''} ${
+                              col.noWrap ? 'whitespace-nowrap' : ''
                             } ${
                               col.align === 'center'
                                 ? 'text-center'
@@ -430,12 +444,12 @@ export function PrintRosterModal<T>({
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200">
+                    <tbody>
                       {pageItems.length === 0 ? (
                         <tr>
                           <td
                             colSpan={columns.length + 1}
-                            className="p-6 text-center text-slate-400 italic"
+                            className="p-6 text-center text-slate-400 italic border border-slate-300"
                           >
                             ไม่มีข้อมูลรายการที่ตรงกับเงื่อนไข
                           </td>
@@ -450,16 +464,14 @@ export function PrintRosterModal<T>({
                               key={rowIdx}
                               className="align-middle odd:bg-white even:bg-slate-50/40 hover:bg-blue-50/30"
                             >
-                              <td className="py-1.5 px-1.5 text-center font-bold text-slate-800 border-r border-slate-300 whitespace-nowrap">
+                              <td className="py-1.5 px-1 text-center font-bold text-slate-800 border border-slate-300 whitespace-nowrap">
                                 {globalIdx}
                               </td>
                               {columns.map((col, cIdx) => (
                                 <td
                                   key={cIdx}
-                                  className={`py-1.5 px-2 ${
+                                  className={`py-1.5 px-1.5 border border-slate-300 ${
                                     col.noWrap ? 'whitespace-nowrap' : ''
-                                  } ${
-                                    cIdx < columns.length - 1 ? 'border-r border-slate-300' : ''
                                   } ${
                                     col.align === 'center'
                                       ? 'text-center'

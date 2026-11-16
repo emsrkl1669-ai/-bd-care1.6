@@ -580,7 +580,7 @@ export const PatientForm: React.FC<PatientFormProps> = ({
       </div>
 
       {/* Sticky Quick-Jump Section Navigation */}
-      <div className="sticky top-14 z-30 bg-white/95 backdrop-blur-xs border border-slate-200 rounded-xl p-1 shadow-xs mb-3 overflow-x-auto flex items-center gap-1 text-[11px] font-semibold text-slate-600">
+      <div className="sticky top-[98px] lg:top-14 z-30 bg-white/95 backdrop-blur-xs border border-slate-200 rounded-xl p-1 shadow-xs mb-3 overflow-x-auto flex items-center gap-1 text-[11px] font-semibold text-slate-600">
         <a href="#sec-1" className="px-2.5 py-1 rounded-md hover:bg-blue-50 hover:text-blue-700 whitespace-nowrap">1. ประวัติส่วนตัว</a>
         <a href="#sec-2" className="px-2.5 py-1 rounded-md hover:bg-blue-50 hover:text-blue-700 whitespace-nowrap">2. ที่อยู่</a>
         <a href="#sec-3" className="px-2.5 py-1 rounded-md hover:bg-blue-50 hover:text-blue-700 whitespace-nowrap">3. พิกัด GPS/QR</a>
@@ -598,7 +598,7 @@ export const PatientForm: React.FC<PatientFormProps> = ({
         {/* ============================================================== */}
         {/* 1. ข้อมูลทั่วไป & ประวัติผู้ป่วย */}
         {/* ============================================================== */}
-        <div id="sec-1" className="scroll-mt-28 bg-white rounded-xl border border-slate-200 shadow-xs p-4 sm:p-5">
+        <div id="sec-1" className="scroll-mt-40 lg:scroll-mt-28 bg-white rounded-xl border border-slate-200 shadow-xs p-4 sm:p-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 mb-3">
             <h3 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">1</span>
@@ -1325,7 +1325,7 @@ export const PatientForm: React.FC<PatientFormProps> = ({
         {/* ============================================================== */}
         {/* 5. สภาพเศรษฐกิจครอบครัว & คำนวณรายได้สุทธิ */}
         {/* ============================================================== */}
-        <div id="sec-5" className="scroll-mt-28 bg-white rounded-xl border border-slate-200 shadow-xs p-5">
+        <div id="sec-5" className="scroll-mt-40 lg:scroll-mt-28 bg-white rounded-xl border border-slate-200 shadow-xs p-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
             <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">5</span>
@@ -1699,7 +1699,7 @@ export const PatientForm: React.FC<PatientFormProps> = ({
         {/* ============================================================== */}
         {/* 7. ระบบผู้ช่วยสัมภาษณ์และประเมินสรุปรายงานอัตโนมัติ (AI Assistant) */}
         {/* ============================================================== */}
-        <div id="sec-7" className="scroll-mt-28 bg-gradient-to-br from-indigo-50/80 via-white to-blue-50/80 rounded-xl border-2 border-indigo-200 shadow-sm p-4 sm:p-5">
+        <div id="sec-7" className="scroll-mt-40 lg:scroll-mt-28 bg-gradient-to-br from-indigo-50/80 via-white to-blue-50/80 rounded-xl border-2 border-indigo-200 shadow-sm p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between border-b border-indigo-100 pb-3 mb-4 gap-2">
             <div>
               <h3 className="font-bold text-indigo-950 text-base flex items-center gap-2">

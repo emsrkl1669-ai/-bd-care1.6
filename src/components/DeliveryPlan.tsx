@@ -303,7 +303,80 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
           </span>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Mobile Dispatch Cards (< md) */}
+        <div className="md:hidden divide-y divide-slate-200">
+          {displayedPatients.map((patient, idx) => (
+            <div key={patient.id} className="p-3.5 space-y-2.5 text-xs">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-full bg-slate-800 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                      {idx + 1}
+                    </span>
+                    <span className="font-mono text-[11px] font-bold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded">
+                      {patient.code}
+                    </span>
+                    <span className="text-[10.5px] text-slate-500">
+                      {patient.mobilityLevel === 'bedridden'
+                        ? 'ติดเตียง 100%'
+                        : patient.mobilityLevel === 'semi_bedridden'
+                        ? 'กึ่งติดเตียง'
+                        : 'พอเดินได้'}
+                    </span>
+                  </div>
+                  <div className="font-bold text-slate-900 text-sm mt-1">
+                    {patient.title}{patient.fullName}
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-slate-700 bg-slate-50 rounded-lg p-2.5 border border-slate-100 space-y-1">
+                <div>
+                  เลขที่ {patient.currentAddress.houseNo} ต.{patient.currentAddress.subdistrict} อ.{patient.currentAddress.district}
+                </div>
+                {patient.landmarkNote && (
+                  <div className="text-[11px] text-slate-500 italic">จุดสังเกต: {patient.landmarkNote}</div>
+                )}
+                <div className="text-[11px] text-slate-600">
+                  ผู้ดูแล: <span className="font-semibold">{patient.caregiverName || '-'}</span>{' '}
+                  ({formatPhone(patient.caregiverPhone) || formatPhone(patient.phone) || '-'})
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-1 text-[11px]">
+                {patient.helpCashEnabled && (
+                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-semibold">
+                    💵 เงินสด {formatCurrency(patient.helpCashAmount)} บ.
+                  </span>
+                )}
+                {patient.helpDiaperSize !== 'NONE' && (
+                  <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded font-semibold">
+                    🩲 ไซส์ {patient.helpDiaperSize} ({patient.helpDiaperPacks} ห่อ)
+                  </span>
+                )}
+                <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
+                  🌾 ข้าว {patient.helpRicePacks} ถุง
+                </span>
+                {patient.helpWaterSize !== 'NONE' && (patient.helpWaterPacks || 0) > 0 && (
+                  <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
+                    💧 น้ำ {patient.helpWaterSize === '600ML' ? '600ML' : '1.5L'} ({patient.helpWaterPacks} แพ็ค)
+                  </span>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleOpenQuickDeliver(patient)}
+                className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 no-print"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>บันทึกส่งมอบสิ่งของแล้ว</span>
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">

@@ -56,6 +56,8 @@ import {
   replaceKnownSyncedIds,
   removeKnownSyncedId,
   clearAllKnownSyncedIds,
+  getStoredLastAuthUid,
+  saveStoredLastAuthUid,
 } from './utils/storage';
 import { Header } from './components/Header';
 import { PatientList } from './components/PatientList';
@@ -96,6 +98,7 @@ import {
   saveDeliveryPlanSettingsToCloud,
   fetchWorkspaceAuthorizedEmails,
   saveWorkspaceAuthorizedEmails,
+  registerStaffAdminMember,
   submitAccessRequest,
   subscribeToMyAccessRequest,
   subscribeToPendingAccessRequests,
@@ -223,6 +226,22 @@ function AppContent() {
       setCloudErrorReason(null);
       setInitialCloudLoaded(false);
 
+      // Prevent stale localStorage cache from another user account leaking or re-uploading
+      const lastAuthUid = getStoredLastAuthUid();
+      if (lastAuthUid && lastAuthUid !== user.uid) {
+        clearAllStoredPatients();
+        clearAllStoredFunerals();
+        clearAllStoredDonations();
+        clearAllPendingOps();
+        clearAllKnownSyncedIds();
+        patientsRef.current = [];
+        funeralsRef.current = [];
+        donationsRef.current = [];
+        setPatients([]);
+        setFunerals([]);
+        setDonations([]);
+      }
+
       try {
         await ensureSuperAdminDirectory(user);
         const access = await verifyWorkspaceAccess(user);
@@ -236,6 +255,7 @@ function AppContent() {
           return;
         }
 
+        saveStoredLastAuthUid(user.uid);
         setAccessVerified('granted');
         const matchedAdmin = findAdminUserByAuthEmail(user.email);
         if (matchedAdmin) {
@@ -475,15 +495,20 @@ function AppContent() {
     if (!hasPending) return;
 
     setCloudStatus('syncing');
-    syncLocalRecordsToCloud(
-      firebaseUser,
-      patientsRef.current,
-      funeralsRef.current,
-      donationsRef.current,
-      deliverySettingsRef.current,
-      authorizedEmailsRef.current
-    )
-      .then((res) => {
+    (async () => {
+      try {
+        const latestEmails = await fetchWorkspaceAuthorizedEmails(firebaseUser);
+        setAuthorizedEmails(latestEmails);
+        authorizedEmailsRef.current = latestEmails;
+
+        const res = await syncLocalRecordsToCloud(
+          firebaseUser,
+          patientsRef.current,
+          funeralsRef.current,
+          donationsRef.current,
+          deliverySettingsRef.current,
+          latestEmails
+        );
         if (res.failed > 0) {
           setCloudStatus('error');
           showToast(
@@ -500,10 +525,10 @@ function AppContent() {
             );
           }
         }
-      })
-      .catch(() => {
+      } catch {
         setCloudStatus('error');
-      });
+      }
+    })();
   }, [isOnline, firebaseUser, accessVerified, showToast]);
 
   const handleUsernamePasswordLogin = useCallback(
@@ -547,7 +572,31 @@ function AppContent() {
 
   const handleCloudSignOut = useCallback(async () => {
     try {
+      const pending = getPendingOps();
+      const hasPending =
+        pending.upserts.patients.length > 0 ||
+        pending.upserts.funerals.length > 0 ||
+        pending.upserts.donations.length > 0 ||
+        pending.upserts.deliverySettings ||
+        pending.deletes.funerals.length > 0 ||
+        pending.deletes.donations.length > 0;
+
       await signOutFirebase();
+
+      if (!hasPending) {
+        clearAllStoredPatients();
+        clearAllStoredFunerals();
+        clearAllStoredDonations();
+        clearAllKnownSyncedIds();
+        saveStoredLastAuthUid(null);
+      }
+      patientsRef.current = [];
+      funeralsRef.current = [];
+      donationsRef.current = [];
+      setPatients([]);
+      setFunerals([]);
+      setDonations([]);
+      setEditingPatient(null);
       showToast('ออกจากระบบแล้ว', 'info');
     } catch {
       showToast('เกิดข้อผิดพลาดในการออกจากระบบ', 'error');
@@ -613,6 +662,20 @@ function AppContent() {
       showToast('อัปเดตรายชื่อบัญชีที่ใช้งานข้ามเครื่องสำเร็จแล้ว', 'success');
     },
     [firebaseUser, showToast]
+  );
+
+  const handleRegisterCreatedStaff = useCallback(
+    async (uid: string, email: string, displayName: string) => {
+      if (!firebaseUser) return;
+      await registerStaffAdminMember(uid, email, displayName, firebaseUser);
+      const updated = await saveWorkspaceAuthorizedEmails(
+        [...authorizedEmailsRef.current, email],
+        firebaseUser
+      );
+      setAuthorizedEmails(updated);
+      authorizedEmailsRef.current = updated;
+    },
+    [firebaseUser]
   );
 
   const handleSubmitAccessRequest = useCallback(
@@ -1460,6 +1523,7 @@ function AppContent() {
         cloudErrorReason={cloudErrorReason}
         authorizedEmails={authorizedEmails}
         onSaveAuthorizedEmails={handleSaveAuthorizedEmails}
+        onRegisterCreatedStaff={handleRegisterCreatedStaff}
         onSwitchUserAccount={handleSwitchUserAccount}
         onCloudSignOut={handleCloudSignOut}
         onManualCloudSync={handleManualCloudSync}

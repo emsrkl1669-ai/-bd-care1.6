@@ -63,7 +63,7 @@ service cloud.firestore {
     function isValidEmailList(data) {
       return !('authorizedEmails' in data) || (
         data.authorizedEmails is list &&
-        data.authorizedEmails.size() <= 20 &&
+        data.authorizedEmails.size() <= 50 &&
         (data.authorizedEmails.size() == 0 || data.authorizedEmails[0] is string)
       );
     }
@@ -183,7 +183,7 @@ service cloud.firestore {
         data.keys().hasOnly(['id', 'authorizedEmails', 'updatedAt', 'updatedBy', 'serverCreatedAt', 'serverUpdatedAt']) &&
         data.id == 'workspace' &&
         data.authorizedEmails is list &&
-        data.authorizedEmails.size() <= 20 &&
+        data.authorizedEmails.size() <= 50 &&
         (data.authorizedEmails.size() == 0 || data.authorizedEmails[0] is string) &&
         isStr(data.updatedAt, 64) &&
         isOptStr(data, 'updatedBy', 200) &&

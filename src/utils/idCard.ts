@@ -120,6 +120,30 @@ export function formatThaiDateShort(dateStr: string): string {
   }
 }
 
+export function formatThaiDateCompact(dateStr: string): string {
+  if (!dateStr) return '-';
+  try {
+    const parts = dateStr.split('-');
+    if (parts.length < 3) return dateStr;
+    let year = parseInt(parts[0], 10);
+    const monthIndex = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+
+    if (isNaN(year) || isNaN(monthIndex) || isNaN(day)) return dateStr;
+
+    if (year < 2400) {
+      year += 543;
+    }
+
+    const shortMonth = THAI_MONTHS_SHORT[monthIndex] || '';
+    const dayPadded = String(day).padStart(2, '0');
+    const year2Digit = String(year).slice(-2);
+    return `${dayPadded} ${shortMonth} ${year2Digit}`;
+  } catch {
+    return dateStr;
+  }
+}
+
 export function formatThaiDateNumeric(dateStr: string): string {
   if (!dateStr) return '-';
   try {

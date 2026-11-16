@@ -744,24 +744,44 @@ export const FuneralFormModal: React.FC<FuneralFormModalProps> = ({
                 <div className="grid grid-cols-12 gap-3 text-xs">
                   <div className="col-span-12 sm:col-span-4">
                     <label className="block font-bold text-slate-700 mb-1">เจ้าหน้าที่ผู้รับคำร้อง</label>
-                    <select
-                      value={formData.officerName || currentAdmin.name}
-                      onChange={(e) => {
-                        const sel = ADMIN_USERS.find((u) => u.name === e.target.value);
-                        if (sel) {
-                          handleChange('officerId', sel.id);
-                          handleChange('officerName', sel.name);
-                          handleChange('officerPosition', sel.position);
-                        }
-                      }}
-                      className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800"
-                    >
-                      {ADMIN_USERS.filter((u) => u.role === 'officer' || u.roleTitle.includes('รับคำร้อง')).map((admin) => (
-                        <option key={admin.id} value={admin.name}>
-                          {admin.name} ({admin.roleTitle})
-                        </option>
-                      ))}
-                    </select>
+                    {(() => {
+                      const officerOptions: AdminUser[] = [...ADMIN_USERS];
+                      if (!officerOptions.some((u) => u.name === currentAdmin.name)) {
+                        officerOptions.push(currentAdmin);
+                      }
+                      if (formData.officerName && !officerOptions.some((u) => u.name === formData.officerName)) {
+                        officerOptions.push({
+                          id: formData.officerId || 'custom-officer',
+                          username: '',
+                          name: formData.officerName,
+                          roleTitle: 'เจ้าหน้าที่ผู้รับคำร้อง',
+                          position: formData.officerPosition || 'เจ้าหน้าที่มูลนิธิฯ',
+                          responsibility: 'รับคำร้องและประสานงาน',
+                          avatarColor: 'bg-slate-600',
+                          role: 'officer',
+                        });
+                      }
+                      return (
+                        <select
+                          value={formData.officerName || currentAdmin.name}
+                          onChange={(e) => {
+                            const sel = officerOptions.find((u) => u.name === e.target.value);
+                            if (sel) {
+                              handleChange('officerId', sel.id);
+                              handleChange('officerName', sel.name);
+                              handleChange('officerPosition', sel.position);
+                            }
+                          }}
+                          className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800"
+                        >
+                          {officerOptions.map((admin) => (
+                            <option key={admin.id} value={admin.name}>
+                              {admin.name} ({admin.roleTitle})
+                            </option>
+                          ))}
+                        </select>
+                      );
+                    })()}
                   </div>
 
                   <div className="col-span-12 sm:col-span-4">

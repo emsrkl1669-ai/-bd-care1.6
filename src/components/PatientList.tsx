@@ -18,11 +18,37 @@ import {
   UserPlus
 } from 'lucide-react';
 import { PatientRecord, SAMUT_PRAKAN_DISTRICTS, MobilityLevel, PatientStatus, AdminUser } from '../types';
-import { formatNationalId, formatPhone, formatCurrency, formatThaiDate, formatThaiDateShort } from '../utils/idCard';
+import {
+  formatNationalId,
+  formatPhone,
+  formatCurrency,
+  formatThaiDate,
+  formatThaiDateShort,
+  formatThaiDateCompact,
+} from '../utils/idCard';
 import { PrintFormSK04 } from './PrintFormSK04';
 import { PrintHouseQrLabel } from './PrintHouseQrLabel';
-import { PrintRosterModal, RosterColumn, RosterSummaryItem } from './PrintRosterModal';
+import { PrintRosterModal } from './PrintRosterModal';
 import { useUiFeedback } from './UiFeedback';
+
+function formatRosterCode(code: string): string {
+  return (code || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^(BDC)\s*-\s*/i, '$1 ')
+    .trim();
+}
+
+function stripAddrPrefix(val: string | undefined, prefixes: string[]): string {
+  let clean = (val || '').trim();
+  if (!clean) return '';
+  for (const p of prefixes) {
+    if (clean.startsWith(p)) {
+      clean = clean.slice(p.length).trim();
+      break;
+    }
+  }
+  return clean;
+}
 
 interface PatientListProps {
   patients: PatientRecord[];
@@ -139,7 +165,7 @@ export const PatientList: React.FC<PatientListProps> = ({
 
           {/* View Mode Switcher & A4 Print Button */}
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
+            <div className="hidden md:flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
               <button
                 onClick={() => setViewMode('table')}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition cursor-pointer ${
@@ -239,11 +265,12 @@ export const PatientList: React.FC<PatientListProps> = ({
       </div>
 
       {filteredPatients.length > 0 ? (
-        viewMode === 'table' ? (
+        <>
+          {viewMode === 'table' && (
           /* ============================================================== */
-          /* COMPACT OVERVIEW TABLE VIEW: Allows viewing everything at once */
+          /* COMPACT OVERVIEW TABLE VIEW (Desktop / Tablet md+)             */
           /* ============================================================== */
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="hidden md:block bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
@@ -254,7 +281,7 @@ export const PatientList: React.FC<PatientListProps> = ({
                     <th className="py-2.5 px-3">ที่อยู่ (อำเภอ)</th>
                     <th className="py-2.5 px-3">สิ่งของช่วยเหลือประจำเดือน</th>
                     <th className="py-2.5 px-3 w-20 text-center">ความเปราะบาง</th>
-                    <th className="py-2.5 px-3 w-40 text-center">จัดการ / พิมพ์</th>
+                    <th className="py-2.5 px-3 w-48 text-center">จัดการ / พิมพ์</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -380,6 +407,14 @@ export const PatientList: React.FC<PatientListProps> = ({
                           </button>
                           <button
                             type="button"
+                            onClick={() => setArchiveTarget(patient)}
+                            className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-md transition cursor-pointer"
+                            title="ย้ายสถานะ / ปิดเคสเข้าคลังประวัติ"
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => onEditPatient(patient)}
                             className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-[11px] font-semibold transition cursor-pointer flex items-center gap-1"
                           >
@@ -394,11 +429,12 @@ export const PatientList: React.FC<PatientListProps> = ({
               </table>
             </div>
           </div>
-        ) : (
-          /* ============================================================== */
-          /* CARD VIEW: Detailed individual cards */
-          /* ============================================================== */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          )}
+
+          {/* ============================================================== */}
+          {/* CARD VIEW: Always shown on mobile (< md), or when selected     */}
+          {/* ============================================================== */}
+          <div className={`${viewMode === 'table' ? 'md:hidden ' : ''}grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5`}>
             {filteredPatients.map((patient) => {
               const primaryPhoto = patient.photos?.[0]?.dataUrl;
               return (
@@ -555,7 +591,7 @@ export const PatientList: React.FC<PatientListProps> = ({
               );
             })}
           </div>
-        )
+        </>
       ) : (
         <div className="p-10 text-center bg-white rounded-xl border border-slate-200 shadow-xs max-w-md mx-auto my-6">
           <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-2.5">
@@ -660,11 +696,10 @@ export const PatientList: React.FC<PatientListProps> = ({
           subtitle={`สายส่งมอบ: ${selectedDistrict === 'all' ? 'ทุกอำเภอในจังหวัดสมุทรปราการ' : 'อำเภอ' + selectedDistrict} • สถานะ: ${statusTab === 'active' ? 'ในโครงการ' : statusTab === 'pending' ? 'รอพิจารณา' : 'ทั้งหมด'}`}
           documentCode="แบบ สค.04-R"
           orientation="landscape"
-          indexColWidth="5%"
+          indexColWidth="4%"
           items={filteredPatients}
           onClose={() => setIsPrintingRoster(false)}
           summaryItems={[
-            { label: 'ผู้ป่วยตามตัวกรอง', value: `${filteredPatients.length} ราย` },
             { label: 'ติดเตียง 100%', value: `${filteredPatients.filter(p => p.mobilityLevel === 'bedridden').length} ราย` },
             { label: 'กึ่งติดเตียง', value: `${filteredPatients.filter(p => p.mobilityLevel === 'semi_bedridden').length} ราย` },
             { label: 'เงินสงเคราะห์รวม', value: `${formatCurrency(filteredPatients.reduce((s, p) => s + (p.helpCashEnabled ? p.helpCashAmount : 0), 0))} บ.` },
@@ -674,24 +709,24 @@ export const PatientList: React.FC<PatientListProps> = ({
           columns={[
             {
               header: 'รหัสโครงการ',
-              colWidth: '11%',
+              colWidth: '10%',
               align: 'center',
               noWrap: true,
               render: (p) => (
-                <div className="font-mono font-bold text-blue-900 text-[10.5px] whitespace-nowrap">
-                  {p.code}
-                </div>
+                <span className="inline-block font-mono font-bold text-blue-900 text-[10px] whitespace-nowrap">
+                  {formatRosterCode(p.code)}
+                </span>
               ),
             },
             {
               header: 'ชื่อ-สกุล / เลข ปชช.',
-              colWidth: '20%',
+              colWidth: '16%',
               render: (p) => (
                 <div>
-                  <div className="font-bold text-slate-900 text-[11px] leading-snug">
+                  <div className="font-bold text-slate-900 text-[10.5px] leading-snug">
                     {p.title}{p.fullName}
                   </div>
-                  <div className="font-mono text-[9.5px] text-slate-600 whitespace-nowrap mt-0.5">
+                  <div className="font-mono text-[9px] text-slate-600 whitespace-nowrap mt-0.5">
                     {formatNationalId(p.nationalId)}
                   </div>
                 </div>
@@ -699,31 +734,38 @@ export const PatientList: React.FC<PatientListProps> = ({
             },
             {
               header: 'ระดับเจ็บป่วย',
-              colWidth: '10%',
+              colWidth: '8%',
               align: 'center',
               noWrap: true,
               render: (p) => (
-                <span className="inline-block text-[9.5px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800 whitespace-nowrap">
+                <span className="inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 whitespace-nowrap">
                   {p.mobilityLevel === 'bedridden' ? 'ติดเตียง' : p.mobilityLevel === 'semi_bedridden' ? 'กึ่งติดเตียง' : 'พอเดินได้'}
                 </span>
               ),
             },
             {
               header: 'ที่อยู่ / พื้นที่',
-              colWidth: '20%',
-              render: (p) => (
-                <div className="text-[10px] text-slate-800 leading-snug">
-                  <div>
-                    เลขที่ {p.currentAddress.houseNo}
-                    {p.currentAddress.buildingVillage ? ` (${p.currentAddress.buildingVillage})` : ''}
-                    {p.currentAddress.soi ? ` ซ.${p.currentAddress.soi}` : ''}
-                    {p.currentAddress.road ? ` ถ.${p.currentAddress.road}` : ''}
+              colWidth: '23%',
+              render: (p) => {
+                const soi = stripAddrPrefix(p.currentAddress.soi, ['ซอย', 'ซ.']);
+                const road = stripAddrPrefix(p.currentAddress.road, ['ถนน', 'ถ.']);
+                const subdistrict = stripAddrPrefix(p.currentAddress.subdistrict, ['ตำบล', 'ต.', 'แขวง']);
+                const district = stripAddrPrefix(p.currentAddress.district, ['อำเภอ', 'อ.', 'เขต']);
+                const province = stripAddrPrefix(p.currentAddress.province || 'สมุทรปราการ', ['จังหวัด', 'จ.']);
+                return (
+                  <div className="text-[9.5px] text-slate-800 leading-snug">
+                    <div>
+                      เลขที่ {p.currentAddress.houseNo}
+                      {p.currentAddress.buildingVillage ? ` (${p.currentAddress.buildingVillage})` : ''}
+                      {soi ? ` ซ.${soi}` : ''}
+                      {road ? ` ถ.${road}` : ''}
+                    </div>
+                    <div className="text-slate-600">
+                      ต.{subdistrict} อ.{district} จ.{province}
+                    </div>
                   </div>
-                  <div className="text-slate-600">
-                    ต.{p.currentAddress.subdistrict} อ.{p.currentAddress.district} จ.{p.currentAddress.province || 'สมุทรปราการ'}
-                  </div>
-                </div>
-              ),
+                );
+              },
             },
             {
               header: 'สิ่งของสงเคราะห์ประจำเดือน',
@@ -751,7 +793,7 @@ export const PatientList: React.FC<PatientListProps> = ({
             },
             {
               header: 'ผู้ดูแล / ติดต่อ',
-              colWidth: '10%',
+              colWidth: '11%',
               render: (p) => (
                 <div className="text-[9.5px] text-slate-800 leading-snug">
                   <div className="font-medium">
@@ -759,8 +801,16 @@ export const PatientList: React.FC<PatientListProps> = ({
                     {p.caregiverRelation ? ` (${p.caregiverRelation})` : ''}
                   </div>
                   {p.caregiverPhone && (
-                    <div className="font-mono text-slate-600 whitespace-nowrap mt-0.5">
-                      {formatPhone(p.caregiverPhone)}
+                    <div className="font-mono text-slate-600 mt-0.5 space-y-0.5">
+                      {p.caregiverPhone
+                        .split(/[,/]+/)
+                        .map((ph) => ph.trim())
+                        .filter(Boolean)
+                        .map((ph, idx) => (
+                          <div key={idx} className="whitespace-nowrap">
+                            {formatPhone(ph)}
+                          </div>
+                        ))}
                     </div>
                   )}
                 </div>
@@ -768,12 +818,12 @@ export const PatientList: React.FC<PatientListProps> = ({
             },
             {
               header: 'รับเข้าโครงการ',
-              colWidth: '6%',
+              colWidth: '10%',
               align: 'center',
               noWrap: true,
               render: (p) => (
                 <div className="text-[9.5px] text-slate-700 font-mono whitespace-nowrap">
-                  {formatThaiDateShort(p.admissionDate)}
+                  {formatThaiDateCompact(p.admissionDate)}
                 </div>
               ),
             },

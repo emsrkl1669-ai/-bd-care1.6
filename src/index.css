@@ -113,23 +113,29 @@
   }
 
   /* Landscape Roster Print Support (แบบ สค.04-R) */
-  body.is-printing-landscape,
-  body.is-printing-landscape html {
-    width: 297mm !important;
+  html:has(body.is-printing-landscape),
+  body.is-printing-landscape {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
   }
 
   .a4-print-modal.is-landscape,
   .a4-print-modal.is-landscape .a4-container {
-    width: 297mm !important;
-    min-width: 297mm !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
   .a4-sheet.a4-sheet-landscape {
     display: block !important;
-    width: 297mm !important;
+    width: 100% !important;
     min-height: 0 !important;
     height: auto !important;
-    padding: 10mm 12mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
     page-break-before: auto !important;
     page-break-after: auto !important;
     page-break-inside: auto !important;
@@ -138,10 +144,16 @@
     break-inside: auto !important;
   }
 
+  .a4-sheet table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
   .a4-sheet thead {
     display: table-header-group !important;
   }
 
+  .a4-sheet tbody tr,
   .a4-sheet tr,
   .signature-block-keep {
     page-break-inside: avoid !important;

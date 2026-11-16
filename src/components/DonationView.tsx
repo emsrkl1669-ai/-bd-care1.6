@@ -328,7 +328,165 @@ export const DonationView: React.FC<DonationViewProps> = ({
           </button>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <>
+          {/* Mobile Card Layout (< md) */}
+          <div className="md:hidden space-y-3">
+            {filteredDonations.map((record) => {
+              const isIndiv = record.recipientType === 'individual';
+              const titleName = isIndiv
+                ? `${record.individualTitle || ''} ${record.individualName || ''}`.trim()
+                : record.agencyName;
+
+              return (
+                <div
+                  key={record.id}
+                  className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden"
+                >
+                  <div className="p-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-mono font-bold text-slate-900 bg-white border border-slate-200 px-2 py-0.5 rounded text-[11px] shrink-0">
+                        {record.code}
+                      </span>
+                      <span className="text-[11px] text-slate-500 truncate">
+                        {formatThaiDate(record.distributionDate)}
+                      </span>
+                    </div>
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded-md text-[10.5px] font-bold shrink-0 ${
+                        record.status === 'completed'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : record.status === 'cancelled'
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {record.status === 'completed'
+                        ? 'ส่งมอบแล้ว'
+                        : record.status === 'cancelled'
+                        ? 'ยกเลิก'
+                        : 'รอส่งมอบ'}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 space-y-2.5 text-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="mb-1">
+                          {isIndiv ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-blue-100 text-blue-800">
+                              <User className="w-3 h-3" />
+                              <span>ประชาชนทั่วไป</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-100 text-emerald-800">
+                              <Building2 className="w-3 h-3" />
+                              <span>หน่วยงานราชการ</span>
+                            </span>
+                          )}
+                        </div>
+                        <div className="font-bold text-slate-900 text-sm">{titleName}</div>
+                        {isIndiv ? (
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            {record.individualNationalId && `ปชช: ${formatNationalId(record.individualNationalId)}`}
+                            {record.individualPhone && ` • ${formatPhone(record.individualPhone)}`}
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-slate-600 mt-0.5">
+                            ผู้แทน: {record.agencyContactPerson}
+                            {record.agencyPhone ? ` • ${formatPhone(record.agencyPhone)}` : ''}
+                          </div>
+                        )}
+                      </div>
+
+                      {record.photos && record.photos.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewingPhoto(record.photos[0].dataUrl)}
+                          className="relative p-1.5 bg-blue-50 text-blue-700 rounded-lg border border-blue-200 shrink-0 cursor-pointer"
+                          title={`ดูภาพถ่าย (${record.photos.length})`}
+                        >
+                          <Camera className="w-4 h-4" />
+                          <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] font-bold flex items-center justify-center">
+                            {record.photos.length}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {record.waterPacks > 0 && (
+                        <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-md font-bold text-[11px]">
+                          💧 น้ำดื่ม {record.waterPacks} แพ็ค
+                        </span>
+                      )}
+                      {record.dryFoodCount > 0 && (
+                        <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md font-bold text-[11px]">
+                          🍱 อาหารแห้ง {record.dryFoodCount} ชุด
+                        </span>
+                      )}
+                      {record.riceBags > 0 && (
+                        <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-bold text-[11px]">
+                          🌾 ข้าวสาร {record.riceBags} ถุง
+                        </span>
+                      )}
+                      {record.diaperPacks > 0 && (
+                        <span className="bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md font-bold text-[11px]">
+                          🩲 แพมเพิส {record.diaperPacks} แพ็ค
+                        </span>
+                      )}
+                      {record.otherItems && record.otherItems.length > 0 && (
+                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-semibold text-[11px]">
+                          +{record.otherItems.length} อื่นๆ
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="truncate">{record.handoverPlace || 'มูลนิธิร่วมกุศลฯ'}</span>
+                      <span>• โดย {record.officerName || 'เจ้าหน้าที่'}</span>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setPrintingRecord(record)}
+                        className="px-2.5 py-1.5 bg-white border border-slate-200 text-blue-600 hover:bg-blue-50 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>พิมพ์ใบมอบ</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(record.id, titleName || record.code)}
+                        className="p-1.5 bg-white border border-slate-200 text-red-500 hover:bg-red-50 rounded-lg cursor-pointer"
+                        title="ลบรายการ"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingRecord(record);
+                        setIsFormOpen(true);
+                      }}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>แก้ไข</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Desktop Table Layout (md+) */}
+          <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
@@ -543,7 +701,8 @@ export const DonationView: React.FC<DonationViewProps> = ({
               </tbody>
             </table>
           </div>
-        </div>
+          </div>
+        </>
       )}
 
       {/* Form Modal for Creating/Editing Donation */}
