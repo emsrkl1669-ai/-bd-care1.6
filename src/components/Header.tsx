@@ -473,6 +473,25 @@ export const Header: React.FC<HeaderProps> = ({
               <div
                 className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-slate-700"
               >
+                {firebaseUser && onManualCloudSync && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setIsBackupMenuOpen(false);
+                        onManualCloudSync();
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 hover:text-blue-800 flex items-center gap-2 cursor-pointer"
+                    >
+                      <RefreshCw className="w-4 h-4 text-blue-600" />
+                      <div>
+                        <div className="font-semibold text-slate-800">ซิงค์ & ดึงข้อมูลคืนจาก Cloud</div>
+                        <div className="text-[10px] text-slate-500">ปรับข้อมูลทุกเครื่องให้ตรงกันล่าสุด</div>
+                      </div>
+                    </button>
+                    <div className="border-t border-slate-100 my-1" />
+                  </>
+                )}
+
                 <button
                   onClick={() => {
                     exportToCsv(patients);

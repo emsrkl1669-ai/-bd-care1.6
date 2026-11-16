@@ -224,3 +224,75 @@ export function generatePatientCode(admissionDateStr?: string, sequenceNumber: n
   return `BDC - ${yy}-${nnn}`;
 }
 
+export function parsePatientCodeParts(code?: string): {
+  year: number;
+  seq: number;
+  hasNumbers: boolean;
+  normalized: string;
+} {
+  const clean = (code || '').trim();
+  const twoPart = clean.match(/(?:BDC[\s\-]*)?(\d{2,4})[\s\-/]+(\d+)/i);
+  if (twoPart) {
+    let year = parseInt(twoPart[1], 10);
+    if (year > 2400) {
+      year = Number(String(year).slice(-2));
+    }
+    const seq = parseInt(twoPart[2], 10);
+    if (Number.isFinite(year) && Number.isFinite(seq)) {
+      return { year, seq, hasNumbers: true, normalized: clean };
+    }
+  }
+
+  const onePart = clean.match(/(\d+)/);
+  if (onePart) {
+    const seq = parseInt(onePart[1], 10);
+    if (Number.isFinite(seq)) {
+      return { year: 0, seq, hasNumbers: true, normalized: clean };
+    }
+  }
+
+  return {
+    year: Number.MAX_SAFE_INTEGER,
+    seq: Number.MAX_SAFE_INTEGER,
+    hasNumbers: false,
+    normalized: clean,
+  };
+}
+
+/**
+ * Compare two patient codes ascending (e.g. BDC-69-001 before BDC-69-018)
+ */
+export function comparePatientCodes(aCode?: string, bCode?: string): number {
+  const a = parsePatientCodeParts(aCode);
+  const b = parsePatientCodeParts(bCode);
+
+  if (a.hasNumbers && b.hasNumbers) {
+    if (a.year !== b.year) return a.year - b.year;
+    if (a.seq !== b.seq) return a.seq - b.seq;
+  } else if (a.hasNumbers !== b.hasNumbers) {
+    return a.hasNumbers ? -1 : 1;
+  }
+
+  return a.normalized.localeCompare(b.normalized, 'th');
+}
+
+/**
+ * Return a new array of patients sorted ascending by patient code (smallest at top, largest at bottom)
+ */
+export function sortPatientsByCodeAsc<
+  T extends { code?: string; admissionDate?: string; createdAt?: string; id?: string }
+>(patients: T[]): T[] {
+  return [...patients].sort((a, b) => {
+    const codeDiff = comparePatientCodes(a.code, b.code);
+    if (codeDiff !== 0) return codeDiff;
+
+    const dateDiff = (a.admissionDate || '').localeCompare(b.admissionDate || '');
+    if (dateDiff !== 0) return dateDiff;
+
+    const createdDiff = (a.createdAt || '').localeCompare(b.createdAt || '');
+    if (createdDiff !== 0) return createdDiff;
+
+    return (a.id || '').localeCompare(b.id || '');
+  });
+}
+

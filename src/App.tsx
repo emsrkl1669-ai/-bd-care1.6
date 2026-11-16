@@ -33,12 +33,15 @@ import {
   getStoredPatients,
   saveStoredPatients,
   clearAllStoredPatients,
+  getRecoveryPatients,
   getStoredFunerals,
   saveStoredFunerals,
   clearAllStoredFunerals,
+  getRecoveryFunerals,
   getStoredDonations,
   saveStoredDonations,
   clearAllStoredDonations,
+  getRecoveryDonations,
   getStoredAdminId,
   saveStoredAdminId,
   getStoredDeliverySettings,
@@ -68,7 +71,7 @@ import { ArchiveView } from './components/ArchiveView';
 import { FuneralAssistanceView } from './components/FuneralAssistanceView';
 import { DonationView } from './components/DonationView';
 import { UiFeedbackProvider, useUiFeedback } from './components/UiFeedback';
-import { formatThaiDate } from './utils/idCard';
+import { formatThaiDate, sortPatientsByCodeAsc } from './utils/idCard';
 import { sanitizeFirestoreId } from './utils/image';
 import {
   SUPER_ADMIN_USERNAME,
@@ -87,6 +90,8 @@ import {
   ensureSuperAdminDirectory,
   subscribeToCloudCollections,
   syncLocalRecordsToCloud,
+  pullAllFromCloudServer,
+  recoverFromDefaultDatabase,
   mergeRecordsNonDestructively,
   reconcileWithCloudSnapshot,
   savePatientToCloud,
@@ -226,20 +231,10 @@ function AppContent() {
       setCloudErrorReason(null);
       setInitialCloudLoaded(false);
 
-      // Prevent stale localStorage cache from another user account leaking or re-uploading
+      // On account switch, reset knownSyncedIds scope so local/unsynced records upload cleanly instead of being dropped
       const lastAuthUid = getStoredLastAuthUid();
       if (lastAuthUid && lastAuthUid !== user.uid) {
-        clearAllStoredPatients();
-        clearAllStoredFunerals();
-        clearAllStoredDonations();
-        clearAllPendingOps();
         clearAllKnownSyncedIds();
-        patientsRef.current = [];
-        funeralsRef.current = [];
-        donationsRef.current = [];
-        setPatients([]);
-        setFunerals([]);
-        setDonations([]);
       }
 
       try {
@@ -280,7 +275,79 @@ function AppContent() {
         setAuthorizedEmails(teamEmails);
         authorizedEmailsRef.current = teamEmails;
 
-        // Flush pending offline deletes & upload any unsynced local records first
+        // Recover any locally preserved snapshots (e.g. from prior session / DB transition) before syncing
+        const pendingDeletes = getPendingOps().deletes;
+        const recoveryPatients = getRecoveryPatients();
+        if (recoveryPatients.length > 0) {
+          const mergedLocalPatients = sortPatientsByCodeAsc(
+            mergeRecordsNonDestructively(recoveryPatients, patientsRef.current)
+          );
+          patientsRef.current = mergedLocalPatients;
+          setPatients(mergedLocalPatients);
+          saveStoredPatients(mergedLocalPatients);
+        }
+        const recoveryFunerals = getRecoveryFunerals();
+        if (recoveryFunerals.length > 0) {
+          const mergedLocalFunerals = mergeRecordsNonDestructively(
+            recoveryFunerals,
+            funeralsRef.current,
+            new Set(pendingDeletes.funerals)
+          );
+          funeralsRef.current = mergedLocalFunerals;
+          setFunerals(mergedLocalFunerals);
+          saveStoredFunerals(mergedLocalFunerals);
+        }
+        const recoveryDonations = getRecoveryDonations();
+        if (recoveryDonations.length > 0) {
+          const mergedLocalDonations = mergeRecordsNonDestructively(
+            recoveryDonations,
+            donationsRef.current,
+            new Set(pendingDeletes.donations)
+          );
+          donationsRef.current = mergedLocalDonations;
+          setDonations(mergedLocalDonations);
+          saveStoredDonations(mergedLocalDonations);
+        }
+
+        // Migrate any legacy records stored on the project's (default) Firestore database
+        const legacyRecovery = await recoverFromDefaultDatabase(user, teamEmails);
+        if (cancelled) return;
+        if (legacyRecovery.recoveredCount > 0) {
+          if (legacyRecovery.recoveredPatients.length > 0) {
+            const nextP = sortPatientsByCodeAsc(
+              mergeRecordsNonDestructively(legacyRecovery.recoveredPatients, patientsRef.current)
+            );
+            patientsRef.current = nextP;
+            setPatients(nextP);
+            saveStoredPatients(nextP);
+          }
+          if (legacyRecovery.recoveredFunerals.length > 0) {
+            const nextF = mergeRecordsNonDestructively(
+              legacyRecovery.recoveredFunerals,
+              funeralsRef.current,
+              new Set(pendingDeletes.funerals)
+            );
+            funeralsRef.current = nextF;
+            setFunerals(nextF);
+            saveStoredFunerals(nextF);
+          }
+          if (legacyRecovery.recoveredDonations.length > 0) {
+            const nextD = mergeRecordsNonDestructively(
+              legacyRecovery.recoveredDonations,
+              donationsRef.current,
+              new Set(pendingDeletes.donations)
+            );
+            donationsRef.current = nextD;
+            setDonations(nextD);
+            saveStoredDonations(nextD);
+          }
+          showToast(
+            `กู้คืนข้อมูลจากฐานข้อมูลเดิมสำเร็จ ${legacyRecovery.recoveredCount} รายการ`,
+            'success'
+          );
+        }
+
+        // Flush pending offline deletes & upload any unsynced local/recovered records first
         const migration = await syncLocalRecordsToCloud(
           user,
           patientsRef.current,
@@ -290,6 +357,74 @@ function AppContent() {
           teamEmails
         );
         if (cancelled) return;
+
+        // Immediately pull authoritative dataset from Cloud Server so all devices see identical data
+        try {
+          const serverSnapshot = await pullAllFromCloudServer(user, {
+            patients: patientsRef.current,
+            funerals: funeralsRef.current,
+            donations: donationsRef.current,
+          });
+          if (cancelled) return;
+
+          const latestPending = getPendingOps();
+          const latestKnown = getKnownSyncedIds();
+
+          const reconciledPatients = sortPatientsByCodeAsc(
+            reconcileWithCloudSnapshot(
+              serverSnapshot.patients,
+              patientsRef.current,
+              new Set(latestPending.upserts.patients),
+              new Set(),
+              new Set(latestKnown.patients),
+              true
+            )
+          );
+          patientsRef.current = reconciledPatients;
+          setPatients(reconciledPatients);
+          saveStoredPatients(reconciledPatients);
+          replaceKnownSyncedIds('patients', serverSnapshot.patients.map((p) => p.id));
+
+          const reconciledFunerals = reconcileWithCloudSnapshot(
+            serverSnapshot.funerals,
+            funeralsRef.current,
+            new Set(latestPending.upserts.funerals),
+            new Set(latestPending.deletes.funerals),
+            new Set(latestKnown.funerals),
+            true
+          );
+          funeralsRef.current = reconciledFunerals;
+          setFunerals(reconciledFunerals);
+          saveStoredFunerals(reconciledFunerals);
+          replaceKnownSyncedIds('funerals', serverSnapshot.funerals.map((f) => f.id));
+
+          const reconciledDonations = reconcileWithCloudSnapshot(
+            serverSnapshot.donations,
+            donationsRef.current,
+            new Set(latestPending.upserts.donations),
+            new Set(latestPending.deletes.donations),
+            new Set(latestKnown.donations),
+            true
+          );
+          donationsRef.current = reconciledDonations;
+          setDonations(reconciledDonations);
+          saveStoredDonations(reconciledDonations);
+          replaceKnownSyncedIds('donations', serverSnapshot.donations.map((d) => d.id));
+
+          if (serverSnapshot.deliverySettings && !latestPending.upserts.deliverySettings) {
+            setDeliverySettings(serverSnapshot.deliverySettings);
+            deliverySettingsRef.current = serverSnapshot.deliverySettings;
+            saveStoredDeliverySettings(serverSnapshot.deliverySettings);
+          }
+
+          setAuthorizedEmails(serverSnapshot.authorizedEmails);
+          authorizedEmailsRef.current = serverSnapshot.authorizedEmails;
+          setInitialCloudLoaded(true);
+          setCloudErrorReason(null);
+          setCloudStatus(migration.failed > 0 ? 'error' : 'synced');
+        } catch (pullErr) {
+          console.warn('Initial authoritative pull deferred to real-time listener:', pullErr);
+        }
 
         if (migration.failed > 0) {
           setCloudStatus('error');
@@ -315,14 +450,17 @@ function AppContent() {
             const knownSet = new Set(known.patients);
 
             setPatients((prevLocal) => {
-              const next = reconcileWithCloudSnapshot(
-                cloudPatients,
-                prevLocal,
-                pendingUpsertSet,
-                new Set(),
-                knownSet,
-                !fromCache
+              const next = sortPatientsByCodeAsc(
+                reconcileWithCloudSnapshot(
+                  cloudPatients,
+                  prevLocal,
+                  pendingUpsertSet,
+                  new Set(),
+                  knownSet,
+                  !fromCache
+                )
               );
+              patientsRef.current = next;
               saveStoredPatients(next);
               return next;
             });
@@ -353,6 +491,7 @@ function AppContent() {
                 knownSet,
                 !fromCache
               );
+              funeralsRef.current = next;
               saveStoredFunerals(next);
               return next;
             });
@@ -383,6 +522,7 @@ function AppContent() {
                 knownSet,
                 !fromCache
               );
+              donationsRef.current = next;
               saveStoredDonations(next);
               return next;
             });
@@ -480,22 +620,23 @@ function AppContent() {
     }
   }, [firebaseUser, myAccessRequest?.status, cloudErrorReason, accessVerified, showToast]);
 
-  // Auto-flush queued offline operations whenever network connection returns
+  // Auto-flush queued offline operations on reconnect & periodically retry pending sync
   useEffect(() => {
     if (!isOnline || !firebaseUser || accessVerified !== 'granted') return;
-    const pending = getPendingOps();
-    const hasPending =
-      pending.upserts.patients.length > 0 ||
-      pending.upserts.funerals.length > 0 ||
-      pending.upserts.donations.length > 0 ||
-      pending.upserts.deliverySettings ||
-      pending.deletes.funerals.length > 0 ||
-      pending.deletes.donations.length > 0;
 
-    if (!hasPending) return;
+    const flushPending = async (silent: boolean) => {
+      const pending = getPendingOps();
+      const hasPending =
+        pending.upserts.patients.length > 0 ||
+        pending.upserts.funerals.length > 0 ||
+        pending.upserts.donations.length > 0 ||
+        pending.upserts.deliverySettings ||
+        pending.deletes.funerals.length > 0 ||
+        pending.deletes.donations.length > 0;
 
-    setCloudStatus('syncing');
-    (async () => {
+      if (!hasPending) return;
+
+      setCloudStatus('syncing');
       try {
         const latestEmails = await fetchWorkspaceAuthorizedEmails(firebaseUser);
         setAuthorizedEmails(latestEmails);
@@ -511,10 +652,12 @@ function AppContent() {
         );
         if (res.failed > 0) {
           setCloudStatus('error');
-          showToast(
-            `ซิงค์รายการที่ค้างอยู่ไม่สำเร็จ ${res.failed} รายการ ระบบจะลองซิงค์ใหม่อัตโนมัติ`,
-            'warning'
-          );
+          if (!silent) {
+            showToast(
+              `ซิงค์รายการที่ค้างอยู่ไม่สำเร็จ ${res.failed} รายการ ระบบจะลองซิงค์ใหม่อัตโนมัติ`,
+              'warning'
+            );
+          }
         } else {
           setCloudStatus('synced');
           setCloudErrorReason(null);
@@ -528,7 +671,14 @@ function AppContent() {
       } catch {
         setCloudStatus('error');
       }
-    })();
+    };
+
+    void flushPending(false);
+    const intervalId = window.setInterval(() => {
+      void flushPending(true);
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
   }, [isOnline, firebaseUser, accessVerified, showToast]);
 
   const handleUsernamePasswordLogin = useCallback(
@@ -614,6 +764,49 @@ function AppContent() {
       setAuthorizedEmails(teamEmails);
       authorizedEmailsRef.current = teamEmails;
 
+      // Include local recovery snapshot patients if any are missing from state
+      const pendingDeletes = getPendingOps().deletes;
+      const recoveryPatients = getRecoveryPatients();
+      if (recoveryPatients.length > 0) {
+        const mergedLocal = sortPatientsByCodeAsc(
+          mergeRecordsNonDestructively(recoveryPatients, patientsRef.current)
+        );
+        patientsRef.current = mergedLocal;
+        setPatients(mergedLocal);
+        saveStoredPatients(mergedLocal);
+      }
+
+      // Check (default) Firestore DB for any legacy unmigrated records
+      const legacyRecovery = await recoverFromDefaultDatabase(firebaseUser, teamEmails);
+      if (legacyRecovery.recoveredPatients.length > 0) {
+        const mergedP = sortPatientsByCodeAsc(
+          mergeRecordsNonDestructively(legacyRecovery.recoveredPatients, patientsRef.current)
+        );
+        patientsRef.current = mergedP;
+        setPatients(mergedP);
+        saveStoredPatients(mergedP);
+      }
+      if (legacyRecovery.recoveredFunerals.length > 0) {
+        const mergedF = mergeRecordsNonDestructively(
+          legacyRecovery.recoveredFunerals,
+          funeralsRef.current,
+          new Set(pendingDeletes.funerals)
+        );
+        funeralsRef.current = mergedF;
+        setFunerals(mergedF);
+        saveStoredFunerals(mergedF);
+      }
+      if (legacyRecovery.recoveredDonations.length > 0) {
+        const mergedD = mergeRecordsNonDestructively(
+          legacyRecovery.recoveredDonations,
+          donationsRef.current,
+          new Set(pendingDeletes.donations)
+        );
+        donationsRef.current = mergedD;
+        setDonations(mergedD);
+        saveStoredDonations(mergedD);
+      }
+
       const res = await syncLocalRecordsToCloud(
         firebaseUser,
         patientsRef.current,
@@ -622,19 +815,81 @@ function AppContent() {
         deliverySettingsRef.current,
         teamEmails
       );
+
+      // Pull fresh authoritative server data so this device immediately matches all other devices
+      const serverSnapshot = await pullAllFromCloudServer(firebaseUser, {
+        patients: patientsRef.current,
+        funerals: funeralsRef.current,
+        donations: donationsRef.current,
+      });
+
+      const latestPending = getPendingOps();
+      const latestKnown = getKnownSyncedIds();
+
+      const nextPatients = sortPatientsByCodeAsc(
+        reconcileWithCloudSnapshot(
+          serverSnapshot.patients,
+          patientsRef.current,
+          new Set(latestPending.upserts.patients),
+          new Set(),
+          new Set(latestKnown.patients),
+          true
+        )
+      );
+      patientsRef.current = nextPatients;
+      setPatients(nextPatients);
+      saveStoredPatients(nextPatients);
+      replaceKnownSyncedIds('patients', serverSnapshot.patients.map((p) => p.id));
+
+      const nextFunerals = reconcileWithCloudSnapshot(
+        serverSnapshot.funerals,
+        funeralsRef.current,
+        new Set(latestPending.upserts.funerals),
+        new Set(latestPending.deletes.funerals),
+        new Set(latestKnown.funerals),
+        true
+      );
+      funeralsRef.current = nextFunerals;
+      setFunerals(nextFunerals);
+      saveStoredFunerals(nextFunerals);
+      replaceKnownSyncedIds('funerals', serverSnapshot.funerals.map((f) => f.id));
+
+      const nextDonations = reconcileWithCloudSnapshot(
+        serverSnapshot.donations,
+        donationsRef.current,
+        new Set(latestPending.upserts.donations),
+        new Set(latestPending.deletes.donations),
+        new Set(latestKnown.donations),
+        true
+      );
+      donationsRef.current = nextDonations;
+      setDonations(nextDonations);
+      saveStoredDonations(nextDonations);
+      replaceKnownSyncedIds('donations', serverSnapshot.donations.map((d) => d.id));
+
+      if (serverSnapshot.deliverySettings && !latestPending.upserts.deliverySettings) {
+        setDeliverySettings(serverSnapshot.deliverySettings);
+        deliverySettingsRef.current = serverSnapshot.deliverySettings;
+        saveStoredDeliverySettings(serverSnapshot.deliverySettings);
+      }
+
+      setInitialCloudLoaded(true);
+
       if (res.failed > 0) {
         setCloudStatus('error');
         showToast(
-          `ซิงค์ไม่สำเร็จ ${res.failed} รายการ ระบบจะลองซิงค์ใหม่อัตโนมัติ`,
+          `ซิงค์ขึ้น Cloud ไม่สำเร็จ ${res.failed} รายการ แต่ดึงข้อมูลล่าสุดจาก Server (${nextPatients.length} ราย) เรียบร้อยแล้ว`,
           'warning'
         );
       } else {
         setCloudStatus('synced');
         setCloudErrorReason(null);
+        const recoveredMsg =
+          legacyRecovery.recoveredCount > 0 ? `กู้คืน ${legacyRecovery.recoveredCount} รายการ • ` : '';
         showToast(
-          res.uploaded > 0 || res.deleted > 0
-            ? `ซิงค์ข้อมูลกับ Cloud สำเร็จ (อัปโหลด ${res.uploaded} / ลบ ${res.deleted} รายการ)`
-            : 'ข้อมูลทั้งหมดตรงกับฐานข้อมูล Cloud แล้ว',
+          res.uploaded > 0 || res.deleted > 0 || legacyRecovery.recoveredCount > 0
+            ? `${recoveredMsg}ซิงค์ข้อมูลตรงกันทุกเครื่องแล้ว (ผู้ป่วย ${nextPatients.length} ราย)`
+            : `ดึงข้อมูลล่าสุดตรงกับ Cloud ทุกเครื่องแล้ว (ผู้ป่วย ${nextPatients.length} ราย)`,
           'success'
         );
       }
@@ -779,19 +1034,23 @@ function AppContent() {
 
   // Save or update a patient
   const handleSavePatient = (savedPatient: PatientRecord) => {
+    const safeId = sanitizeFirestoreId(savedPatient.id, 'pt');
     const normalized: PatientRecord = {
       ...savedPatient,
+      id: safeId,
       createdAt: savedPatient.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const safeId = sanitizeFirestoreId(normalized.id, 'pt');
-    markPendingUpsert('patients', normalized.id);
+    markPendingUpsert('patients', safeId);
 
-    const existsIndex = patientsRef.current.findIndex((p) => p.id === normalized.id);
-    const updatedPatients =
+    const existsIndex = patientsRef.current.findIndex(
+      (p) => p.id === safeId || p.id === savedPatient.id
+    );
+    const updatedPatients = sortPatientsByCodeAsc(
       existsIndex >= 0
         ? patientsRef.current.map((p, i) => (i === existsIndex ? normalized : p))
-        : [normalized, ...patientsRef.current];
+        : [normalized, ...patientsRef.current]
+    );
 
     setPatients(updatedPatients);
     patientsRef.current = updatedPatients;
@@ -801,9 +1060,9 @@ function AppContent() {
       setCloudStatus('syncing');
       savePatientToCloud(normalized, firebaseUser, authorizedEmailsRef.current)
         .then(() => {
-          clearPendingUpsert('patients', normalized.id);
+          clearPendingUpsert('patients', savedPatient.id);
           clearPendingUpsert('patients', safeId);
-          addKnownSyncedIds('patients', [normalized.id, safeId]);
+          addKnownSyncedIds('patients', [safeId]);
           setCloudStatus('synced');
           setCloudErrorReason(null);
         })
@@ -837,19 +1096,20 @@ function AppContent() {
       officerName: currentAdmin.name,
     };
 
+    const safeId = sanitizeFirestoreId(patientId, 'pt');
     const modifiedPatient: PatientRecord = {
       ...existing,
+      id: safeId,
       status: newStatus,
       statusReason: `${reason} (บันทึกโดย ${currentAdmin.name} ณ ${formatThaiDate(todayStr)})`,
       statusHistory: [...(existing.statusHistory || []), historyEntry],
       updatedAt: nowIso,
     };
 
-    const safeId = sanitizeFirestoreId(patientId, 'pt');
-    markPendingUpsert('patients', patientId);
+    markPendingUpsert('patients', safeId);
 
-    const updatedPatients = patientsRef.current.map((p) =>
-      p.id === patientId ? modifiedPatient : p
+    const updatedPatients = sortPatientsByCodeAsc(
+      patientsRef.current.map((p) => (p.id === patientId ? modifiedPatient : p))
     );
     setPatients(updatedPatients);
     patientsRef.current = updatedPatients;
@@ -888,19 +1148,20 @@ function AppContent() {
       officerName: currentAdmin.name,
     };
 
+    const safeId = sanitizeFirestoreId(patientId, 'pt');
     const modifiedPatient: PatientRecord = {
       ...existing,
+      id: safeId,
       status: 'active',
       statusReason: `กู้คืนสถานะกลับเข้าสู่โครงการโดย ${currentAdmin.name} ณ ${formatThaiDate(todayStr)}`,
       statusHistory: [...(existing.statusHistory || []), historyEntry],
       updatedAt: nowIso,
     };
 
-    const safeId = sanitizeFirestoreId(patientId, 'pt');
-    markPendingUpsert('patients', patientId);
+    markPendingUpsert('patients', safeId);
 
-    const updatedPatients = patientsRef.current.map((p) =>
-      p.id === patientId ? modifiedPatient : p
+    const updatedPatients = sortPatientsByCodeAsc(
+      patientsRef.current.map((p) => (p.id === patientId ? modifiedPatient : p))
     );
     setPatients(updatedPatients);
     patientsRef.current = updatedPatients;
@@ -930,17 +1191,22 @@ function AppContent() {
     const existing = patientsRef.current.find((p) => p.id === patientId);
     if (!existing) return;
 
+    const safeId = sanitizeFirestoreId(patientId, 'pt');
+    const safeDelivery: MonthlyDelivery = {
+      ...delivery,
+      id: sanitizeFirestoreId(delivery.id, 'del'),
+    };
     const modifiedPatient: PatientRecord = {
       ...existing,
-      deliveries: [delivery, ...(existing.deliveries || [])],
+      id: safeId,
+      deliveries: [safeDelivery, ...(existing.deliveries || [])],
       updatedAt: nowIso,
     };
 
-    const safeId = sanitizeFirestoreId(patientId, 'pt');
-    markPendingUpsert('patients', patientId);
+    markPendingUpsert('patients', safeId);
 
-    const updatedPatients = patientsRef.current.map((p) =>
-      p.id === patientId ? modifiedPatient : p
+    const updatedPatients = sortPatientsByCodeAsc(
+      patientsRef.current.map((p) => (p.id === patientId ? modifiedPatient : p))
     );
     setPatients(updatedPatients);
     patientsRef.current = updatedPatients;
@@ -948,7 +1214,7 @@ function AppContent() {
 
     if (firebaseUser) {
       setCloudStatus('syncing');
-      saveDeliveryToCloud(modifiedPatient, delivery, firebaseUser, authorizedEmailsRef.current)
+      saveDeliveryToCloud(modifiedPatient, safeDelivery, firebaseUser, authorizedEmailsRef.current)
         .then(() => {
           clearPendingUpsert('patients', patientId);
           clearPendingUpsert('patients', safeId);
@@ -965,17 +1231,20 @@ function AppContent() {
 
   // Save or update funeral assistance record
   const handleSaveFuneral = (savedRecord: FuneralAssistanceRecord) => {
+    const safeId = sanitizeFirestoreId(savedRecord.id, 'funeral');
     const normalized: FuneralAssistanceRecord = {
       ...savedRecord,
+      id: safeId,
       createdAt: savedRecord.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const safeId = sanitizeFirestoreId(normalized.id, 'funeral');
-    clearPendingDelete('funerals', normalized.id);
+    clearPendingDelete('funerals', savedRecord.id);
     clearPendingDelete('funerals', safeId);
-    markPendingUpsert('funerals', normalized.id);
+    markPendingUpsert('funerals', safeId);
 
-    const idx = funeralsRef.current.findIndex((f) => f.id === normalized.id);
+    const idx = funeralsRef.current.findIndex(
+      (f) => f.id === safeId || f.id === savedRecord.id
+    );
     const updatedFunerals =
       idx >= 0
         ? funeralsRef.current.map((f, i) => (i === idx ? normalized : f))
@@ -989,9 +1258,9 @@ function AppContent() {
       setCloudStatus('syncing');
       saveFuneralToCloud(normalized, firebaseUser, authorizedEmailsRef.current)
         .then(() => {
-          clearPendingUpsert('funerals', normalized.id);
+          clearPendingUpsert('funerals', savedRecord.id);
           clearPendingUpsert('funerals', safeId);
-          addKnownSyncedIds('funerals', [normalized.id, safeId]);
+          addKnownSyncedIds('funerals', [safeId]);
           setCloudStatus('synced');
           setCloudErrorReason(null);
         })
@@ -1036,17 +1305,20 @@ function AppContent() {
 
   // Save or update donation record
   const handleSaveDonation = (savedRecord: DonationDistributionRecord) => {
+    const safeId = sanitizeFirestoreId(savedRecord.id, 'donation');
     const normalized: DonationDistributionRecord = {
       ...savedRecord,
+      id: safeId,
       createdAt: savedRecord.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const safeId = sanitizeFirestoreId(normalized.id, 'donation');
-    clearPendingDelete('donations', normalized.id);
+    clearPendingDelete('donations', savedRecord.id);
     clearPendingDelete('donations', safeId);
-    markPendingUpsert('donations', normalized.id);
+    markPendingUpsert('donations', safeId);
 
-    const idx = donationsRef.current.findIndex((d) => d.id === normalized.id);
+    const idx = donationsRef.current.findIndex(
+      (d) => d.id === safeId || d.id === savedRecord.id
+    );
     const updatedDonations =
       idx >= 0
         ? donationsRef.current.map((d, i) => (i === idx ? normalized : d))
@@ -1060,9 +1332,9 @@ function AppContent() {
       setCloudStatus('syncing');
       saveDonationToCloud(normalized, firebaseUser, authorizedEmailsRef.current)
         .then(() => {
-          clearPendingUpsert('donations', normalized.id);
+          clearPendingUpsert('donations', savedRecord.id);
           clearPendingUpsert('donations', safeId);
-          addKnownSyncedIds('donations', [normalized.id, safeId]);
+          addKnownSyncedIds('donations', [safeId]);
           setCloudStatus('synced');
           setCloudErrorReason(null);
         })
@@ -1116,22 +1388,36 @@ function AppContent() {
     let nextDonations = donationsRef.current;
 
     if (importedPatients && Array.isArray(importedPatients)) {
-      importedPatients.forEach((p) => markPendingUpsert('patients', p.id));
-      nextPatients = mergeRecordsNonDestructively(importedPatients, patientsRef.current);
+      const sanitizedPatients = importedPatients.map((p) => ({
+        ...p,
+        id: sanitizeFirestoreId(p.id, 'pt'),
+      }));
+      sanitizedPatients.forEach((p) => markPendingUpsert('patients', p.id));
+      nextPatients = sortPatientsByCodeAsc(
+        mergeRecordsNonDestructively(sanitizedPatients, patientsRef.current)
+      );
       setPatients(nextPatients);
       patientsRef.current = nextPatients;
       saveStoredPatients(nextPatients);
     }
     if (importedFunerals && Array.isArray(importedFunerals)) {
-      importedFunerals.forEach((f) => markPendingUpsert('funerals', f.id));
-      nextFunerals = mergeRecordsNonDestructively(importedFunerals, funeralsRef.current);
+      const sanitizedFunerals = importedFunerals.map((f) => ({
+        ...f,
+        id: sanitizeFirestoreId(f.id, 'funeral'),
+      }));
+      sanitizedFunerals.forEach((f) => markPendingUpsert('funerals', f.id));
+      nextFunerals = mergeRecordsNonDestructively(sanitizedFunerals, funeralsRef.current);
       setFunerals(nextFunerals);
       funeralsRef.current = nextFunerals;
       saveStoredFunerals(nextFunerals);
     }
     if (importedDonations && Array.isArray(importedDonations)) {
-      importedDonations.forEach((d) => markPendingUpsert('donations', d.id));
-      nextDonations = mergeRecordsNonDestructively(importedDonations, donationsRef.current);
+      const sanitizedDonations = importedDonations.map((d) => ({
+        ...d,
+        id: sanitizeFirestoreId(d.id, 'donation'),
+      }));
+      sanitizedDonations.forEach((d) => markPendingUpsert('donations', d.id));
+      nextDonations = mergeRecordsNonDestructively(sanitizedDonations, donationsRef.current);
       setDonations(nextDonations);
       donationsRef.current = nextDonations;
       saveStoredDonations(nextDonations);
@@ -1179,11 +1465,14 @@ function AppContent() {
     });
 
     if (confirmed) {
-      clearAllStoredPatients();
-      clearAllStoredFunerals();
-      clearAllStoredDonations();
+      clearAllStoredPatients(true);
+      clearAllStoredFunerals(true);
+      clearAllStoredDonations(true);
       clearAllPendingOps();
       clearAllKnownSyncedIds();
+      patientsRef.current = [];
+      funeralsRef.current = [];
+      donationsRef.current = [];
       setPatients([]);
       setFunerals([]);
       setDonations([]);
@@ -1653,6 +1942,7 @@ function AppContent() {
               setEditingPatient(null);
               setCurrentTab('new');
             }}
+            onManualCloudSync={handleManualCloudSync}
             currentAdmin={currentAdmin}
           />
         )}

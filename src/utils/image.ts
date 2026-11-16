@@ -140,7 +140,7 @@ export function getNextPatientCode(admissionDateStr: string | undefined, existin
   const yy = shortYearMatch ? shortYearMatch[1] : String((new Date().getFullYear() + 543)).slice(-2);
 
   let maxSeq = 0;
-  const pattern = new RegExp(`^BDC\\s*-\\s*${yy}\\s*-\\s*(\\d+)$`, 'i');
+  const pattern = new RegExp(`^BDC\\s*[-\\s]*${yy}\\s*-\\s*(\\d+)$`, 'i');
   for (const code of existingCodes) {
     const m = (code || '').trim().match(pattern);
     if (m) {

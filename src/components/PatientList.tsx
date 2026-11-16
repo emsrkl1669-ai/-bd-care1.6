@@ -15,7 +15,8 @@ import {
   List,
   Sparkles,
   Navigation,
-  UserPlus
+  UserPlus,
+  RefreshCw,
 } from 'lucide-react';
 import { PatientRecord, SAMUT_PRAKAN_DISTRICTS, MobilityLevel, PatientStatus, AdminUser } from '../types';
 import {
@@ -25,6 +26,7 @@ import {
   formatThaiDate,
   formatThaiDateShort,
   formatThaiDateCompact,
+  sortPatientsByCodeAsc,
 } from '../utils/idCard';
 import { PrintFormSK04 } from './PrintFormSK04';
 import { PrintHouseQrLabel } from './PrintHouseQrLabel';
@@ -55,6 +57,7 @@ interface PatientListProps {
   onEditPatient: (patient: PatientRecord) => void;
   onArchivePatient: (patientId: string, newStatus: PatientStatus, reason: string) => void;
   onAddNew?: () => void;
+  onManualCloudSync?: () => void;
   currentAdmin: AdminUser;
 }
 
@@ -63,6 +66,7 @@ export const PatientList: React.FC<PatientListProps> = ({
   onEditPatient,
   onArchivePatient,
   onAddNew,
+  onManualCloudSync,
   currentAdmin,
 }) => {
   const { showToast } = useUiFeedback();
@@ -89,29 +93,31 @@ export const PatientList: React.FC<PatientListProps> = ({
     return p.status === 'active' || p.status === 'pending';
   });
 
-  const filteredPatients = activeOrPending.filter((p) => {
-    const term = searchTerm.toLowerCase().replace(/[- ]/g, '');
-    const cleanId = p.nationalId.replace(/[- ]/g, '');
-    const cleanPhone = (p.phone || '').replace(/[- ]/g, '');
-    const cleanCaregiverPhone = (p.caregiverPhone || '').replace(/[- ]/g, '');
+  const filteredPatients = sortPatientsByCodeAsc(
+    activeOrPending.filter((p) => {
+      const term = searchTerm.toLowerCase().replace(/[- ]/g, '');
+      const cleanId = p.nationalId.replace(/[- ]/g, '');
+      const cleanPhone = (p.phone || '').replace(/[- ]/g, '');
+      const cleanCaregiverPhone = (p.caregiverPhone || '').replace(/[- ]/g, '');
 
-    const matchSearch =
-      !term ||
-      p.fullName.toLowerCase().includes(term) ||
-      p.code.toLowerCase().includes(term) ||
-      cleanId.includes(term) ||
-      cleanPhone.includes(term) ||
-      cleanCaregiverPhone.includes(term) ||
-      (p.caregiverName && p.caregiverName.toLowerCase().includes(term));
+      const matchSearch =
+        !term ||
+        p.fullName.toLowerCase().includes(term) ||
+        p.code.toLowerCase().includes(term) ||
+        cleanId.includes(term) ||
+        cleanPhone.includes(term) ||
+        cleanCaregiverPhone.includes(term) ||
+        (p.caregiverName && p.caregiverName.toLowerCase().includes(term));
 
-    const matchDistrict =
-      selectedDistrict === 'all' || p.currentAddress.district === selectedDistrict;
+      const matchDistrict =
+        selectedDistrict === 'all' || p.currentAddress.district === selectedDistrict;
 
-    const matchMobility =
-      selectedMobility === 'all' || p.mobilityLevel === selectedMobility;
+      const matchMobility =
+        selectedMobility === 'all' || p.mobilityLevel === selectedMobility;
 
-    return matchSearch && matchDistrict && matchMobility;
-  });
+      return matchSearch && matchDistrict && matchMobility;
+    })
+  );
 
   const handleConfirmArchive = () => {
     if (!archiveTarget) return;
@@ -595,21 +601,55 @@ export const PatientList: React.FC<PatientListProps> = ({
       ) : (
         <div className="p-10 text-center bg-white rounded-xl border border-slate-200 shadow-xs max-w-md mx-auto my-6">
           <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-2.5">
-            <UserPlus className="w-6 h-6" />
+            {patients.length > 0 ? <Filter className="w-6 h-6" /> : <UserPlus className="w-6 h-6" />}
           </div>
-          <h3 className="font-bold text-slate-800 text-sm">ยังไม่มีข้อมูลผู้ป่วยในระบบ</h3>
+          <h3 className="font-bold text-slate-800 text-sm">
+            {patients.length > 0
+              ? 'ไม่พบผู้ป่วยตามตัวกรองที่เลือก'
+              : 'ยังไม่มีข้อมูลผู้ป่วยในเครื่องนี้'}
+          </h3>
           <p className="text-xs text-slate-500 mt-1 mb-4 leading-relaxed">
-            ข้อมูลตัวอย่างถูกลบเรียบร้อยแล้ว พร้อมสำหรับการบันทึกและสำรวจข้อมูลจริง แบบ สค.04 ของมูลนิธิฯ
+            {patients.length > 0
+              ? `มีข้อมูลผู้ป่วยในระบบทั้งหมด ${patients.length} ราย (อาจอยู่ในสถานะอื่นหรือตัวกรองอำเภอ/คำค้นหา)`
+              : 'หากเคยบันทึกข้อมูลไว้ในฐานข้อมูล Cloud หรือเครื่องอื่น สามารถกดปุ่มดึงข้อมูลคืนจาก Cloud หรือบันทึกข้อมูลใหม่ได้ทันที'}
           </p>
-          {onAddNew && (
-            <button
-              onClick={onAddNew}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              + บันทึกข้อมูลผู้ป่วยใหม่ (สค.04)
-            </button>
-          )}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {patients.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusTab('all');
+                  setSelectedDistrict('all');
+                  setSelectedMobility('all');
+                  setSearchTerm('');
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
+              >
+                <Filter className="w-3.5 h-3.5" />
+                แสดงทุกสถานะ / ล้างตัวกรอง
+              </button>
+            )}
+            {onManualCloudSync && (
+              <button
+                type="button"
+                onClick={onManualCloudSync}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                ดึงข้อมูลคืน / ซิงค์ Cloud
+              </button>
+            )}
+            {onAddNew && (
+              <button
+                type="button"
+                onClick={onAddNew}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                + บันทึกข้อมูลผู้ป่วยใหม่ (สค.04)
+              </button>
+            )}
+          </div>
         </div>
       )}
 

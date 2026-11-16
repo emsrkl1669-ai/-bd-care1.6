@@ -24,6 +24,8 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 // Connect specifically to the provisioned Cloud Firestore database ID on bd-care-fde92
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Optional handle to the (default) Firestore database on bd-care-fde92 for non-destructive recovery migration
+export const defaultDb = getFirestore(app);
 export const auth = getAuth(app);
 
 export enum OperationType {

@@ -18,7 +18,7 @@ import {
   AdminUser,
   DeliveryPlanSettings,
 } from '../types';
-import { formatCurrency, formatPhone, formatThaiMonthYear } from '../utils/idCard';
+import { formatCurrency, formatPhone, formatThaiMonthYear, sortPatientsByCodeAsc } from '../utils/idCard';
 import { PrintDeliveryPlanModal } from './PrintDeliveryPlanModal';
 import { useUiFeedback } from './UiFeedback';
 
@@ -53,8 +53,10 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
 
   // Only active patients receive monthly supplies
   const activePatients = patients.filter((p) => p.status === 'active');
-  const displayedPatients = activePatients.filter(
-    (p) => selectedDistrict === 'all' || p.currentAddress.district === selectedDistrict
+  const displayedPatients = sortPatientsByCodeAsc(
+    activePatients.filter(
+      (p) => selectedDistrict === 'all' || p.currentAddress.district === selectedDistrict
+    )
   );
 
   // Totals calculations

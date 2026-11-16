@@ -12,7 +12,12 @@ import {
   FileText 
 } from 'lucide-react';
 import { PatientRecord, PatientStatus, AdminUser } from '../types';
-import { formatNationalId, formatThaiDate, formatThaiDateShort } from '../utils/idCard';
+import {
+  formatNationalId,
+  formatThaiDate,
+  formatThaiDateShort,
+  sortPatientsByCodeAsc,
+} from '../utils/idCard';
 import { PrintFormSK04 } from './PrintFormSK04';
 import { PrintRosterModal } from './PrintRosterModal';
 import { useUiFeedback } from './UiFeedback';
@@ -39,22 +44,24 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
     ['deceased', 'moved', 'rejected'].includes(p.status)
   );
 
-  const displayedPatients = archivedPatients.filter((p) => {
-    const matchType = filterType === 'all' || p.status === filterType;
-    const term = searchTerm.toLowerCase().replace(/[- ]/g, '');
-    const cleanId = p.nationalId.replace(/[- ]/g, '');
-    const cleanPhone = (p.phone || '').replace(/[- ]/g, '');
+  const displayedPatients = sortPatientsByCodeAsc(
+    archivedPatients.filter((p) => {
+      const matchType = filterType === 'all' || p.status === filterType;
+      const term = searchTerm.toLowerCase().replace(/[- ]/g, '');
+      const cleanId = p.nationalId.replace(/[- ]/g, '');
+      const cleanPhone = (p.phone || '').replace(/[- ]/g, '');
 
-    const matchSearch =
-      !term ||
-      p.fullName.toLowerCase().includes(term) ||
-      p.code.toLowerCase().includes(term) ||
-      cleanId.includes(term) ||
-      cleanPhone.includes(term) ||
-      (p.statusReason && p.statusReason.toLowerCase().includes(term));
+      const matchSearch =
+        !term ||
+        p.fullName.toLowerCase().includes(term) ||
+        p.code.toLowerCase().includes(term) ||
+        cleanId.includes(term) ||
+        cleanPhone.includes(term) ||
+        (p.statusReason && p.statusReason.toLowerCase().includes(term));
 
-    return matchType && matchSearch;
-  });
+      return matchType && matchSearch;
+    })
+  );
 
   return (
     <div className="max-w-7xl mx-auto py-6 px-4 space-y-6">

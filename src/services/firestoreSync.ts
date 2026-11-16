@@ -5,6 +5,7 @@ import {
   getDoc,
   getDocFromServer,
   getDocs,
+  getDocsFromServer,
   onSnapshot,
   query,
   serverTimestamp,
@@ -13,9 +14,14 @@ import {
   deleteDoc,
   where,
   Unsubscribe,
+  Firestore,
+  Query,
+  QuerySnapshot,
+  DocumentData,
 } from 'firebase/firestore';
 import {
   db,
+  defaultDb,
   SUPER_ADMIN_EMAIL,
   OperationType,
   handleFirestoreError,
@@ -24,6 +30,7 @@ import {
   usernameToAuthEmail,
   findAdminUserByAuthEmail,
 } from '../firebase';
+import { sortPatientsByCodeAsc } from '../utils/idCard';
 import {
   ADMIN_USERS,
   PatientRecord,
@@ -109,8 +116,9 @@ function normalizePatientStatus(
 
 function emailsNeedBackfill(existingEmails: unknown, targetEmails: string[]): boolean {
   if (!Array.isArray(existingEmails)) return true;
-  const existingSet = new Set(existingEmails.map((e) => String(e).trim().toLowerCase()));
-  return targetEmails.some((e) => !existingSet.has(e.trim().toLowerCase()));
+  // Firestore array-contains queries are case-sensitive, so require exact lowercase matches
+  const existingExactSet = new Set(existingEmails.map((e) => String(e).trim()));
+  return targetEmails.some((e) => !existingExactSet.has(e.trim().toLowerCase()));
 }
 
 export const DEFAULT_STAFF_EMAILS = ADMIN_USERS.map((u) =>
@@ -751,7 +759,7 @@ export async function savePatientToCloud(
       {
         ...patient,
         id: patientId,
-        createdAt: existingData?.createdAt || patient.createdAt,
+        createdAt: existingData?.createdAt ?? patient.createdAt,
       },
       ownerUid,
       parentEmails,
@@ -859,7 +867,7 @@ export async function saveDeliveryToCloud(
     await setDoc(
       patientRef,
       serializePatientParent(
-        { ...patient, id: patientId, createdAt: existingData.createdAt },
+        { ...patient, id: patientId, createdAt: existingData.createdAt ?? patient.createdAt },
         existingData.ownerUid,
         parentEmails,
         existingData.serverCreatedAt,
@@ -892,7 +900,7 @@ export async function saveFuneralToCloud(
       {
         ...record,
         id: funeralId,
-        createdAt: existingData?.createdAt || record.createdAt,
+        createdAt: existingData?.createdAt ?? record.createdAt,
       },
       ownerUid,
       parentEmails,
@@ -964,7 +972,7 @@ export async function saveDonationToCloud(
       {
         ...record,
         id: donationId,
-        createdAt: existingData?.createdAt || record.createdAt,
+        createdAt: existingData?.createdAt ?? record.createdAt,
       },
       ownerUid,
       parentEmails,
@@ -1448,35 +1456,254 @@ export async function rejectAccessRequest(
 // Read & Hydration Helpers
 // ============================================================================
 
+function normalizeIdAddress(val: unknown): PatientRecord['idAddress'] {
+  const m = asMap(val) || {};
+  return {
+    houseNo: typeof m.houseNo === 'string' ? m.houseNo : String(m.houseNo ?? ''),
+    moo: typeof m.moo === 'string' ? m.moo : '',
+    trok: typeof m.trok === 'string' ? m.trok : '',
+    soi: typeof m.soi === 'string' ? m.soi : '',
+    road: typeof m.road === 'string' ? m.road : '',
+    subdistrict: typeof m.subdistrict === 'string' ? m.subdistrict : '',
+    district: typeof m.district === 'string' ? m.district : 'เมืองสมุทรปราการ',
+    province: typeof m.province === 'string' && m.province ? m.province : 'สมุทรปราการ',
+  };
+}
+
+function normalizeCurrentAddress(val: unknown): PatientRecord['currentAddress'] {
+  const m = asMap(val) || {};
+  return {
+    houseNo: typeof m.houseNo === 'string' ? m.houseNo : String(m.houseNo ?? ''),
+    buildingVillage: typeof m.buildingVillage === 'string' ? m.buildingVillage : '',
+    trok: typeof m.trok === 'string' ? m.trok : '',
+    soi: typeof m.soi === 'string' ? m.soi : '',
+    road: typeof m.road === 'string' ? m.road : '',
+    subdistrict: typeof m.subdistrict === 'string' ? m.subdistrict : '',
+    district: typeof m.district === 'string' ? m.district : 'เมืองสมุทรปราการ',
+    province: typeof m.province === 'string' && m.province ? m.province : 'สมุทรปราการ',
+  };
+}
+
+function normalizeHydratedPatient(
+  raw: Record<string, any>,
+  deliveries: MonthlyDelivery[],
+  photos: PatientPhoto[],
+  documents: PatientDocument[]
+): PatientRecord {
+  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
+  const disabilityMap = asMap(rest.disabilityCard) || {};
+  const dimMap = asMap(rest.dimensionScores) || {};
+  const idAddress = normalizeIdAddress(rest.idAddress);
+  const currentAddress = normalizeCurrentAddress(rest.currentAddress);
+
+  return {
+    ...(rest as PatientRecord),
+    id: String(rest.id || ''),
+    code: String(rest.code || ''),
+    admissionDate: String(rest.admissionDate || ''),
+    status: normalizePatientStatus(rest.status),
+    statusHistory: Array.isArray(rest.statusHistory) ? rest.statusHistory : undefined,
+    nationalId: String(rest.nationalId || ''),
+    title: String(rest.title || ''),
+    fullName: String(rest.fullName || 'ไม่ระบุชื่อ'),
+    age: safeNum(rest.age, 0),
+    gender: rest.gender === 'หญิง' ? 'หญิง' : 'ชาย',
+    phone: String(rest.phone || ''),
+    caregiverName: String(rest.caregiverName || ''),
+    caregiverRelation: String(rest.caregiverRelation || ''),
+    caregiverPhone: String(rest.caregiverPhone || ''),
+    idAddress,
+    isSameAddress: Boolean(rest.isSameAddress),
+    currentAddress,
+    latitude: safeCoord(rest.latitude),
+    longitude: safeCoord(rest.longitude),
+    landmarkNote: String(rest.landmarkNote || ''),
+    googleMapsUrl: String(rest.googleMapsUrl || ''),
+    qrCodeDataUrl: String(rest.qrCodeDataUrl || ''),
+    mobilityLevel: normalizeMobility(rest.mobilityLevel),
+    chronicDiseases: String(rest.chronicDiseases || ''),
+    symptomsDetail: String(rest.symptomsDetail || ''),
+    disabilityCard: {
+      hasCard: Boolean(disabilityMap.hasCard),
+      type: typeof disabilityMap.type === 'string' ? disabilityMap.type : '',
+      cardNumber: typeof disabilityMap.cardNumber === 'string' ? disabilityMap.cardNumber : '',
+    },
+    specialNeeds: Array.isArray(rest.specialNeeds) ? rest.specialNeeds.map(String) : [],
+    familyMembersTotal: safeNum(rest.familyMembersTotal, 0),
+    familyMembersMale: safeNum(rest.familyMembersMale, 0),
+    familyMembersFemale: safeNum(rest.familyMembersFemale, 0),
+    incomeSalary: safeNum(rest.incomeSalary, 0),
+    incomeDisability: safeNum(rest.incomeDisability, 0),
+    incomeElderly: safeNum(rest.incomeElderly, 0),
+    incomeStateWelfare: safeNum(rest.incomeStateWelfare, 0),
+    incomeOther: safeNum(rest.incomeOther, 0),
+    monthlyExpense: safeNum(rest.monthlyExpense, 0),
+    netIncome: safeNum(rest.netIncome, 0),
+    economicNote: String(rest.economicNote || ''),
+    helpCashEnabled: Boolean(rest.helpCashEnabled),
+    helpCashAmount: safeNum(rest.helpCashAmount, 0),
+    helpDiaperSize: normalizeDiaperSize(rest.helpDiaperSize),
+    helpDiaperPacks: safeNum(rest.helpDiaperPacks, 0),
+    helpRicePacks: safeNum(rest.helpRicePacks, 0),
+    helpWaterSize: normalizeWaterSize(rest.helpWaterSize),
+    helpWaterPacks: safeNum(rest.helpWaterPacks, 0),
+    helpOtherSupplies: String(rest.helpOtherSupplies || ''),
+    vulnerabilityScore: safeNum(rest.vulnerabilityScore, 0),
+    vulnerabilityLevel: String(rest.vulnerabilityLevel || ''),
+    dimensionScores: {
+      mobilityScore: safeNum(dimMap.mobilityScore, 0),
+      complicationsScore: safeNum(dimMap.complicationsScore, 0),
+      economicScore: safeNum(dimMap.economicScore, 0),
+      caregiverScore: safeNum(dimMap.caregiverScore, 0),
+    },
+    socialWorkerOpinion: String(rest.socialWorkerOpinion || ''),
+    aiSuggestions: String(rest.aiSuggestions || ''),
+    interviewerName: String(rest.interviewerName || ''),
+    interviewerPosition: String(rest.interviewerPosition || ''),
+    approverName: String(rest.approverName || ''),
+    approverPosition: String(rest.approverPosition || ''),
+    presidentName: String(rest.presidentName || ''),
+    presidentPosition: String(rest.presidentPosition || ''),
+    deliveries,
+    photos,
+    documents,
+    createdAt: String(rest.createdAt || ''),
+    updatedAt: String(rest.updatedAt || rest.createdAt || ''),
+  };
+}
+
+function normalizeHydratedFuneral(
+  raw: Record<string, any>,
+  documents: FuneralDocument[]
+): FuneralAssistanceRecord {
+  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
+  const safeStatus =
+    rest.status === 'pending' ||
+    rest.status === 'approved' ||
+    rest.status === 'completed' ||
+    rest.status === 'rejected'
+      ? rest.status
+      : 'pending';
+  return {
+    ...(rest as FuneralAssistanceRecord),
+    id: String(rest.id || ''),
+    code: String(rest.code || ''),
+    applicationDate: String(rest.applicationDate || ''),
+    status: safeStatus,
+    deceasedTitle: String(rest.deceasedTitle || ''),
+    deceasedName: String(rest.deceasedName || 'ไม่ระบุชื่อ'),
+    deceasedNationalId: String(rest.deceasedNationalId || ''),
+    deceasedAge: safeNum(rest.deceasedAge, 0),
+    deceasedDeathDate: String(rest.deceasedDeathDate || ''),
+    deceasedDeathTime: String(rest.deceasedDeathTime || ''),
+    causeOfDeath: String(rest.causeOfDeath || ''),
+    deathPlace: String(rest.deathPlace || ''),
+    deceasedAddress: String(rest.deceasedAddress || ''),
+    applicantTitle: String(rest.applicantTitle || ''),
+    applicantName: String(rest.applicantName || 'ไม่ระบุชื่อ'),
+    applicantNationalId: String(rest.applicantNationalId || ''),
+    applicantPhone: String(rest.applicantPhone || ''),
+    applicantRelation: String(rest.applicantRelation || ''),
+    applicantAddress: String(rest.applicantAddress || ''),
+    applicantPovertyReason: String(rest.applicantPovertyReason || ''),
+    templeName: String(rest.templeName || ''),
+    cremationDate: String(rest.cremationDate || ''),
+    cremationTime: String(rest.cremationTime || ''),
+    assistanceAmount: safeNum(rest.assistanceAmount, 0),
+    coffinProvided: Boolean(rest.coffinProvided),
+    transportProvided: Boolean(rest.transportProvided),
+    shroudClothProvided: Boolean(rest.shroudClothProvided),
+    otherItems: String(rest.otherItems || ''),
+    officerId: String(rest.officerId || ''),
+    officerName: String(rest.officerName || ''),
+    officerPosition: String(rest.officerPosition || ''),
+    approverName: String(rest.approverName || ''),
+    approverPosition: String(rest.approverPosition || ''),
+    documents,
+    createdAt: String(rest.createdAt || ''),
+    updatedAt: String(rest.updatedAt || rest.createdAt || ''),
+  };
+}
+
+function normalizeHydratedDonation(
+  raw: Record<string, any>,
+  photos: DonationPhoto[],
+  documents: DonationDocument[]
+): DonationDistributionRecord {
+  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
+  const safeStatus =
+    rest.status === 'completed' || rest.status === 'pending' || rest.status === 'cancelled'
+      ? rest.status
+      : 'completed';
+  const safeRecipientType =
+    rest.recipientType === 'individual' || rest.recipientType === 'government'
+      ? rest.recipientType
+      : 'individual';
+  return {
+    ...(rest as DonationDistributionRecord),
+    id: String(rest.id || ''),
+    code: String(rest.code || ''),
+    distributionDate: String(rest.distributionDate || ''),
+    status: safeStatus,
+    recipientType: safeRecipientType,
+    waterPacks: safeNum(rest.waterPacks, 0),
+    waterUnit: String(rest.waterUnit || 'แพ็ค'),
+    dryFoodCount: safeNum(rest.dryFoodCount, 0),
+    dryFoodUnit: String(rest.dryFoodUnit || 'ชุด'),
+    riceBags: safeNum(rest.riceBags, 0),
+    riceKg: safeNum(rest.riceKg, 0),
+    diaperPacks: safeNum(rest.diaperPacks, 0),
+    diaperSize: String(rest.diaperSize || ''),
+    otherItems: Array.isArray(rest.otherItems) ? rest.otherItems : [],
+    notes: String(rest.notes || ''),
+    handoverPlace: String(rest.handoverPlace || ''),
+    deliveryMethod: String(rest.deliveryMethod || ''),
+    officerId: String(rest.officerId || ''),
+    officerName: String(rest.officerName || ''),
+    officerPosition: String(rest.officerPosition || ''),
+    approverName: String(rest.approverName || ''),
+    approverPosition: String(rest.approverPosition || ''),
+    photos,
+    documents,
+    createdAt: String(rest.createdAt || ''),
+    updatedAt: String(rest.updatedAt || rest.createdAt || ''),
+  };
+}
+
 async function hydratePatient(
   raw: Record<string, any>,
   user: User,
-  fallbackLocal?: PatientRecord
+  fallbackLocal?: PatientRecord,
+  sourceDb: Firestore = db,
+  preferServer: boolean = false
 ): Promise<PatientRecord> {
   const patientId = raw.id;
   const fullAccess = isFullAccessStaffUser(user);
-  const userEmail = (user.email || '').toLowerCase();
+  const userEmail = (user.email || '').trim().toLowerCase();
 
   const delQuery = fullAccess
-    ? collection(db, 'patients', patientId, 'deliveries')
+    ? collection(sourceDb, 'patients', patientId, 'deliveries')
     : query(
-        collection(db, 'patients', patientId, 'deliveries'),
+        collection(sourceDb, 'patients', patientId, 'deliveries'),
         where('authorizedEmails', 'array-contains', userEmail)
       );
 
   const mediaQuery = fullAccess
-    ? collection(db, 'patients', patientId, 'media')
+    ? collection(sourceDb, 'patients', patientId, 'media')
     : query(
-        collection(db, 'patients', patientId, 'media'),
+        collection(sourceDb, 'patients', patientId, 'media'),
         where('authorizedEmails', 'array-contains', userEmail)
       );
 
+  const fetchSub = (q: Query<DocumentData>): Promise<QuerySnapshot<DocumentData>> =>
+    preferServer ? getDocsFromServer(q).catch(() => getDocs(q)) : getDocs(q);
+
   const [delSnap, mediaSnap] = await Promise.all([
-    getDocs(delQuery).catch((err) => {
+    fetchSub(delQuery).catch((err) => {
       console.warn(`Failed loading deliveries for patient ${patientId}:`, err);
       return null;
     }),
-    getDocs(mediaQuery).catch((err) => {
+    fetchSub(mediaQuery).catch((err) => {
       console.warn(`Failed loading media for patient ${patientId}:`, err);
       return null;
     }),
@@ -1492,11 +1719,11 @@ async function hydratePatient(
         monthYearLabel: val.monthYearLabel || '',
         cashAmount: safeNum(val.cashAmount, 0),
         cashGiven: Boolean(val.cashGiven),
-        diaperSize: val.diaperSize || 'NONE',
+        diaperSize: normalizeDiaperSize(val.diaperSize),
         diaperPacks: safeNum(val.diaperPacks, 0),
         ricePacks: safeNum(val.ricePacks, 0),
         waterPacks: safeNum(val.waterPacks, 0),
-        waterSize: val.waterSize || '1.5L',
+        waterSize: normalizeWaterSize(val.waterSize),
         otherItems: val.otherItems || '',
         receivedBy: val.receivedBy || '',
         recipientRelation: val.recipientRelation || '',
@@ -1542,31 +1769,30 @@ async function hydratePatient(
     documents = fallbackLocal.documents || [];
   }
 
-  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
-  return {
-    ...(rest as PatientRecord),
-    deliveries,
-    photos,
-    documents,
-  };
+  return normalizeHydratedPatient(raw, deliveries, photos, documents);
 }
 
 async function hydrateFuneral(
   raw: Record<string, any>,
   user: User,
-  fallbackLocal?: FuneralAssistanceRecord
+  fallbackLocal?: FuneralAssistanceRecord,
+  sourceDb: Firestore = db,
+  preferServer: boolean = false
 ): Promise<FuneralAssistanceRecord> {
   const funeralId = raw.id;
   const fullAccess = isFullAccessStaffUser(user);
-  const userEmail = (user.email || '').toLowerCase();
+  const userEmail = (user.email || '').trim().toLowerCase();
   const mediaQuery = fullAccess
-    ? collection(db, 'funerals', funeralId, 'media')
+    ? collection(sourceDb, 'funerals', funeralId, 'media')
     : query(
-        collection(db, 'funerals', funeralId, 'media'),
+        collection(sourceDb, 'funerals', funeralId, 'media'),
         where('authorizedEmails', 'array-contains', userEmail)
       );
 
-  const mediaSnap = await getDocs(mediaQuery).catch((err) => {
+  const mediaSnap = await (preferServer
+    ? getDocsFromServer(mediaQuery).catch(() => getDocs(mediaQuery))
+    : getDocs(mediaQuery)
+  ).catch((err) => {
     console.warn(`Failed loading media for funeral ${funeralId}:`, err);
     return null;
   });
@@ -1590,29 +1816,30 @@ async function hydrateFuneral(
     documents = fallbackLocal.documents;
   }
 
-  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
-  return {
-    ...(rest as FuneralAssistanceRecord),
-    documents,
-  };
+  return normalizeHydratedFuneral(raw, documents);
 }
 
 async function hydrateDonation(
   raw: Record<string, any>,
   user: User,
-  fallbackLocal?: DonationDistributionRecord
+  fallbackLocal?: DonationDistributionRecord,
+  sourceDb: Firestore = db,
+  preferServer: boolean = false
 ): Promise<DonationDistributionRecord> {
   const donationId = raw.id;
   const fullAccess = isFullAccessStaffUser(user);
-  const userEmail = (user.email || '').toLowerCase();
+  const userEmail = (user.email || '').trim().toLowerCase();
   const mediaQuery = fullAccess
-    ? collection(db, 'donations', donationId, 'media')
+    ? collection(sourceDb, 'donations', donationId, 'media')
     : query(
-        collection(db, 'donations', donationId, 'media'),
+        collection(sourceDb, 'donations', donationId, 'media'),
         where('authorizedEmails', 'array-contains', userEmail)
       );
 
-  const mediaSnap = await getDocs(mediaQuery).catch((err) => {
+  const mediaSnap = await (preferServer
+    ? getDocsFromServer(mediaQuery).catch(() => getDocs(mediaQuery))
+    : getDocs(mediaQuery)
+  ).catch((err) => {
     console.warn(`Failed loading media for donation ${donationId}:`, err);
     return null;
   });
@@ -1646,12 +1873,7 @@ async function hydrateDonation(
     documents = fallbackLocal.documents || [];
   }
 
-  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
-  return {
-    ...(rest as DonationDistributionRecord),
-    photos,
-    documents,
-  };
+  return normalizeHydratedDonation(raw, photos, documents);
 }
 
 export interface CloudErrorDetail {
@@ -1677,7 +1899,7 @@ export function subscribeToCloudCollections(
   }
 ): () => void {
   const fullAccess = isFullAccessStaffUser(user);
-  const userEmail = (user.email || '').toLowerCase();
+  const userEmail = (user.email || '').trim().toLowerCase();
 
   const patientsQuery = fullAccess
     ? collection(db, 'patients')
@@ -1690,6 +1912,9 @@ export function subscribeToCloudCollections(
     : query(collection(db, 'donations'), where('authorizedEmails', 'array-contains', userEmail));
 
   const unsubs: Unsubscribe[] = [];
+  let patientSeq = 0;
+  let funeralSeq = 0;
+  let donationSeq = 0;
 
   const emitError = (err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1701,12 +1926,14 @@ export function subscribeToCloudCollections(
     onSnapshot(
       patientsQuery,
       async (snap) => {
+        const seq = ++patientSeq;
         try {
           const localMap = new Map((handlers.getLocalPatients?.() || []).map((p) => [p.id, p]));
           const items = await Promise.all(
-            snap.docs.map((d) => hydratePatient({ id: d.id, ...d.data() }, user, localMap.get(d.id)))
+            snap.docs.map((d) => hydratePatient({ ...d.data(), id: d.id }, user, localMap.get(d.id)))
           );
-          handlers.onPatients(items, snap.metadata.fromCache);
+          if (seq !== patientSeq) return;
+          handlers.onPatients(sortPatientsByCodeAsc(items), snap.metadata.fromCache);
         } catch (err) {
           emitError(err);
         }
@@ -1722,11 +1949,13 @@ export function subscribeToCloudCollections(
     onSnapshot(
       funeralsQuery,
       async (snap) => {
+        const seq = ++funeralSeq;
         try {
           const localMap = new Map((handlers.getLocalFunerals?.() || []).map((f) => [f.id, f]));
           const items = await Promise.all(
-            snap.docs.map((d) => hydrateFuneral({ id: d.id, ...d.data() }, user, localMap.get(d.id)))
+            snap.docs.map((d) => hydrateFuneral({ ...d.data(), id: d.id }, user, localMap.get(d.id)))
           );
+          if (seq !== funeralSeq) return;
           handlers.onFunerals(items, snap.metadata.fromCache);
         } catch (err) {
           emitError(err);
@@ -1743,11 +1972,13 @@ export function subscribeToCloudCollections(
     onSnapshot(
       donationsQuery,
       async (snap) => {
+        const seq = ++donationSeq;
         try {
           const localMap = new Map((handlers.getLocalDonations?.() || []).map((d) => [d.id, d]));
           const items = await Promise.all(
-            snap.docs.map((d) => hydrateDonation({ id: d.id, ...d.data() }, user, localMap.get(d.id)))
+            snap.docs.map((d) => hydrateDonation({ ...d.data(), id: d.id }, user, localMap.get(d.id)))
           );
+          if (seq !== donationSeq) return;
           handlers.onDonations(items, snap.metadata.fromCache);
         } catch (err) {
           emitError(err);
@@ -2096,4 +2327,223 @@ export async function syncLocalRecordsToCloud(
   addKnownSyncedIds('donations', [...cloudDonationTimes.keys(), ...uploadedDonationIds]);
 
   return { uploaded, deleted, failed };
+}
+
+/**
+ * Authoritative one-shot server pull so every device can guarantee identical up-to-date data.
+ */
+export async function pullAllFromCloudServer(
+  user: User,
+  localFallback?: {
+    patients?: PatientRecord[];
+    funerals?: FuneralAssistanceRecord[];
+    donations?: DonationDistributionRecord[];
+  }
+): Promise<{
+  patients: PatientRecord[];
+  funerals: FuneralAssistanceRecord[];
+  donations: DonationDistributionRecord[];
+  deliverySettings: DeliveryPlanSettings | null;
+  authorizedEmails: string[];
+}> {
+  const fullAccess = isFullAccessStaffUser(user);
+  const userEmail = (user.email || '').trim().toLowerCase();
+
+  const pQuery = fullAccess
+    ? collection(db, 'patients')
+    : query(collection(db, 'patients'), where('authorizedEmails', 'array-contains', userEmail));
+  const fQuery = fullAccess
+    ? collection(db, 'funerals')
+    : query(collection(db, 'funerals'), where('authorizedEmails', 'array-contains', userEmail));
+  const dQuery = fullAccess
+    ? collection(db, 'donations')
+    : query(collection(db, 'donations'), where('authorizedEmails', 'array-contains', userEmail));
+
+  const fetchServerOrCache = <T,>(q: any): Promise<T> =>
+    getDocsFromServer(q).catch(() => getDocs(q)) as Promise<T>;
+
+  const [pSnap, fSnap, dSnap, dpSnap, authorizedEmails] = await Promise.all([
+    fetchServerOrCache<any>(pQuery),
+    fetchServerOrCache<any>(fQuery),
+    fetchServerOrCache<any>(dQuery),
+    getDocFromServer(doc(db, 'settings', 'delivery_plan')).catch(() =>
+      getDoc(doc(db, 'settings', 'delivery_plan')).catch(() => null)
+    ),
+    fetchWorkspaceAuthorizedEmails(user),
+  ]);
+
+  const localPatientMap = new Map((localFallback?.patients || []).map((p) => [p.id, p]));
+  const localFuneralMap = new Map((localFallback?.funerals || []).map((f) => [f.id, f]));
+  const localDonationMap = new Map((localFallback?.donations || []).map((d) => [d.id, d]));
+
+  const [patients, funerals, donations] = await Promise.all([
+    Promise.all(
+      pSnap.docs.map((d: any) =>
+        hydratePatient({ ...d.data(), id: d.id }, user, localPatientMap.get(d.id), db, true)
+      )
+    ),
+    Promise.all(
+      fSnap.docs.map((d: any) =>
+        hydrateFuneral({ ...d.data(), id: d.id }, user, localFuneralMap.get(d.id), db, true)
+      )
+    ),
+    Promise.all(
+      dSnap.docs.map((d: any) =>
+        hydrateDonation({ ...d.data(), id: d.id }, user, localDonationMap.get(d.id), db, true)
+      )
+    ),
+  ]);
+
+  let deliverySettings: DeliveryPlanSettings | null = null;
+  if (dpSnap && dpSnap.exists()) {
+    const data = dpSnap.data();
+    const price = Number(data.ricePricePerBag);
+    const customRice =
+      data.customRiceCount === null || data.customRiceCount === undefined
+        ? null
+        : Number(data.customRiceCount);
+    deliverySettings = {
+      ricePricePerBag: Number.isFinite(price) && price >= 0 ? price : 0,
+      customRiceCount:
+        customRice !== null && Number.isFinite(customRice) && customRice >= 0 ? customRice : null,
+      currentMonth: typeof data.currentMonth === 'string' ? data.currentMonth : '',
+      updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : '',
+    };
+  }
+
+  return {
+    patients: sortPatientsByCodeAsc(patients),
+    funerals,
+    donations,
+    deliverySettings,
+    authorizedEmails,
+  };
+}
+
+/**
+ * Safely migrate any legacy records from the project's (default) Firestore database
+ * into the provisioned BD-Care Cloud Firestore database (`db`) when missing.
+ * Never throws or disrupts normal startup if (default) DB is empty or inaccessible.
+ */
+export async function recoverFromDefaultDatabase(
+  user: User,
+  teamEmails: string[] = []
+): Promise<{
+  recoveredPatients: PatientRecord[];
+  recoveredFunerals: FuneralAssistanceRecord[];
+  recoveredDonations: DonationDistributionRecord[];
+  recoveredCount: number;
+}> {
+  const recoveredPatients: PatientRecord[] = [];
+  const recoveredFunerals: FuneralAssistanceRecord[] = [];
+  const recoveredDonations: DonationDistributionRecord[] = [];
+  let recoveredCount = 0;
+
+  try {
+    const fullAccess = isFullAccessStaffUser(user);
+    const userEmail = (user.email || '').trim().toLowerCase();
+    const normalizedEmails = normalizeAuthorizedEmails(teamEmails, user);
+
+    // Inspect existing document IDs in target `db` first so we never overwrite newer edits
+    const [targetPSnap, targetFSnap, targetDSnap] = await Promise.all([
+      getDocsFromServer(
+        fullAccess
+          ? collection(db, 'patients')
+          : query(collection(db, 'patients'), where('authorizedEmails', 'array-contains', userEmail))
+      ).catch(() => getDocs(collection(db, 'patients')).catch(() => null)),
+      getDocsFromServer(
+        fullAccess
+          ? collection(db, 'funerals')
+          : query(collection(db, 'funerals'), where('authorizedEmails', 'array-contains', userEmail))
+      ).catch(() => getDocs(collection(db, 'funerals')).catch(() => null)),
+      getDocsFromServer(
+        fullAccess
+          ? collection(db, 'donations')
+          : query(collection(db, 'donations'), where('authorizedEmails', 'array-contains', userEmail))
+      ).catch(() => getDocs(collection(db, 'donations')).catch(() => null)),
+    ]);
+
+    const existingPatientIds = new Set<string>(targetPSnap ? targetPSnap.docs.map((d) => d.id) : []);
+    const existingFuneralIds = new Set<string>(targetFSnap ? targetFSnap.docs.map((d) => d.id) : []);
+    const existingDonationIds = new Set<string>(targetDSnap ? targetDSnap.docs.map((d) => d.id) : []);
+
+    // Read (default) database collections in silent try/catch blocks
+    const [legacyPSnap, legacyFSnap, legacyDSnap] = await Promise.all([
+      getDocsFromServer(collection(defaultDb, 'patients')).catch(() => null),
+      getDocsFromServer(collection(defaultDb, 'funerals')).catch(() => null),
+      getDocsFromServer(collection(defaultDb, 'donations')).catch(() => null),
+    ]);
+
+    if (legacyPSnap && !legacyPSnap.empty) {
+      for (const d of legacyPSnap.docs) {
+        const safeId = sanitizeFirestoreId(d.id, 'pt');
+        if (existingPatientIds.has(d.id) || existingPatientIds.has(safeId)) continue;
+        try {
+          const hydrated = await hydratePatient(
+            { ...d.data(), id: safeId },
+            user,
+            undefined,
+            defaultDb,
+            true
+          );
+          await savePatientToCloud(hydrated, user, normalizedEmails);
+          recoveredPatients.push(hydrated);
+          recoveredCount++;
+        } catch (err) {
+          console.warn(`Legacy patient ${d.id} recovery skipped:`, err);
+        }
+      }
+    }
+
+    if (legacyFSnap && !legacyFSnap.empty) {
+      for (const d of legacyFSnap.docs) {
+        const safeId = sanitizeFirestoreId(d.id, 'funeral');
+        if (existingFuneralIds.has(d.id) || existingFuneralIds.has(safeId)) continue;
+        try {
+          const hydrated = await hydrateFuneral(
+            { ...d.data(), id: safeId },
+            user,
+            undefined,
+            defaultDb,
+            true
+          );
+          await saveFuneralToCloud(hydrated, user, normalizedEmails);
+          recoveredFunerals.push(hydrated);
+          recoveredCount++;
+        } catch (err) {
+          console.warn(`Legacy funeral ${d.id} recovery skipped:`, err);
+        }
+      }
+    }
+
+    if (legacyDSnap && !legacyDSnap.empty) {
+      for (const d of legacyDSnap.docs) {
+        const safeId = sanitizeFirestoreId(d.id, 'donation');
+        if (existingDonationIds.has(d.id) || existingDonationIds.has(safeId)) continue;
+        try {
+          const hydrated = await hydrateDonation(
+            { ...d.data(), id: safeId },
+            user,
+            undefined,
+            defaultDb,
+            true
+          );
+          await saveDonationToCloud(hydrated, user, normalizedEmails);
+          recoveredDonations.push(hydrated);
+          recoveredCount++;
+        } catch (err) {
+          console.warn(`Legacy donation ${d.id} recovery skipped:`, err);
+        }
+      }
+    }
+  } catch {
+    // Silent fallback when (default) database is unavailable or empty
+  }
+
+  return {
+    recoveredPatients: sortPatientsByCodeAsc(recoveredPatients),
+    recoveredFunerals,
+    recoveredDonations,
+    recoveredCount,
+  };
 }

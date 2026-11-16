@@ -6,16 +6,21 @@ import {
   PendingOpsState,
 } from '../types';
 import { generateQrCodeDataUrl, makeGoogleMapsUrl } from './qrcode';
-import { formatThaiMonthYear } from './idCard';
+import { formatThaiMonthYear, sortPatientsByCodeAsc } from './idCard';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 const STORAGE_KEY = 'bdcare_patients_v1';
+const RECOVERY_PATIENTS_KEY = 'bdcare_patients_recovery_v1';
 const FUNERAL_STORAGE_KEY = 'bdcare_funerals_v1';
+const RECOVERY_FUNERALS_KEY = 'bdcare_funerals_recovery_v1';
 const DONATION_STORAGE_KEY = 'bdcare_donations_v1';
+const RECOVERY_DONATIONS_KEY = 'bdcare_donations_recovery_v1';
 const CURRENT_ADMIN_KEY = 'bdcare_current_admin_id';
 const DELIVERY_SETTINGS_KEY = 'bdcare_delivery_settings_v1';
 const LEGACY_RICE_PRICE_KEY = 'bdcare_rice_price_per_bag';
 const PENDING_OPS_KEY = 'bdcare_pending_ops_v1';
 const KNOWN_SYNCED_KEY = 'bdcare_known_synced_v1';
+const KNOWN_SYNCED_SCOPE = `${firebaseConfig.projectId}:${firebaseConfig.firestoreDatabaseId || '(default)'}`;
 const AUTHORIZED_EMAILS_KEY = 'bdcare_authorized_emails_v1';
 const LAST_AUTH_UID_KEY = 'bdcare_last_auth_uid_v1';
 
@@ -32,35 +37,59 @@ export function getStoredPatients(): PatientRecord[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed;
+    return sortPatientsByCodeAsc(parsed);
   } catch (err) {
     console.error('Failed to load patients from localStorage:', err);
     return [];
   }
 }
 
-export function saveStoredPatients(patients: PatientRecord[]): void {
+export function getRecoveryPatients(): PatientRecord[] {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(patients));
-  } catch (err) {
-    console.warn('localStorage quota exceeded when saving patients, retrying with compressed media cache:', err);
-    try {
-      const compact = patients.map((p) => ({
-        ...p,
-        photos: [],
-        documents: [],
-        deliveries: (p.deliveries || []).map((d) => ({ ...d, photoUrl: undefined })),
-      }));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(compact));
-    } catch (innerErr) {
-      console.error('Failed to save compact patients to localStorage:', innerErr);
-    }
+    const raw = localStorage.getItem(RECOVERY_PATIENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return sortPatientsByCodeAsc(parsed);
+  } catch {
+    return [];
   }
 }
 
-export function clearAllStoredPatients(): void {
+export function saveStoredPatients(patients: PatientRecord[]): void {
+  const sorted = sortPatientsByCodeAsc(patients);
+  const saveToKey = (key: string) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(sorted));
+    } catch (err) {
+      console.warn(`localStorage quota exceeded when saving ${key}, retrying with compact cache:`, err);
+      try {
+        const compact = sorted.map((p) => ({
+          ...p,
+          photos: [],
+          documents: [],
+          deliveries: (p.deliveries || []).map((d) => ({ ...d, photoUrl: undefined })),
+        }));
+        localStorage.setItem(key, JSON.stringify(compact));
+      } catch (innerErr) {
+        console.error(`Failed to save compact patients to ${key}:`, innerErr);
+      }
+    }
+  };
+
+  saveToKey(STORAGE_KEY);
+  // Preserve non-empty recovery snapshot so sign-out or database migration never loses patient records
+  if (sorted.length > 0) {
+    saveToKey(RECOVERY_PATIENTS_KEY);
+  }
+}
+
+export function clearAllStoredPatients(includeRecovery: boolean = false): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    if (includeRecovery) {
+      localStorage.removeItem(RECOVERY_PATIENTS_KEY);
+    }
   } catch (err) {
     console.error('Failed to clear patients in localStorage:', err);
   }
@@ -116,7 +145,8 @@ export function exportToCsv(patients: PatientRecord[]): void {
     'ผู้อนุมัติโครงการ',
   ];
 
-  const rows = patients.map((p) => [
+  const sortedPatients = sortPatientsByCodeAsc(patients);
+  const rows = sortedPatients.map((p) => [
     p.code,
     p.status,
     p.admissionDate,
@@ -184,23 +214,43 @@ export function getStoredFunerals(): FuneralAssistanceRecord[] {
   }
 }
 
-export function saveStoredFunerals(records: FuneralAssistanceRecord[]): void {
+export function getRecoveryFunerals(): FuneralAssistanceRecord[] {
   try {
-    localStorage.setItem(FUNERAL_STORAGE_KEY, JSON.stringify(records));
-  } catch (err) {
-    console.warn('localStorage quota exceeded when saving funerals, retrying without embedded files:', err);
-    try {
-      const compact = records.map((r) => ({ ...r, documents: [] }));
-      localStorage.setItem(FUNERAL_STORAGE_KEY, JSON.stringify(compact));
-    } catch (innerErr) {
-      console.error('Failed to save compact funerals to localStorage:', innerErr);
-    }
+    const raw = localStorage.getItem(RECOVERY_FUNERALS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
 
-export function clearAllStoredFunerals(): void {
+export function saveStoredFunerals(records: FuneralAssistanceRecord[]): void {
+  const saveToKey = (key: string) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(records));
+    } catch (err) {
+      console.warn(`localStorage quota exceeded when saving ${key}, retrying without embedded files:`, err);
+      try {
+        const compact = records.map((r) => ({ ...r, documents: [] }));
+        localStorage.setItem(key, JSON.stringify(compact));
+      } catch (innerErr) {
+        console.error(`Failed to save compact funerals to ${key}:`, innerErr);
+      }
+    }
+  };
+  saveToKey(FUNERAL_STORAGE_KEY);
+  if (records.length > 0) {
+    saveToKey(RECOVERY_FUNERALS_KEY);
+  }
+}
+
+export function clearAllStoredFunerals(includeRecovery: boolean = false): void {
   try {
     localStorage.setItem(FUNERAL_STORAGE_KEY, JSON.stringify([]));
+    if (includeRecovery) {
+      localStorage.removeItem(RECOVERY_FUNERALS_KEY);
+    }
   } catch (err) {
     console.error('Failed to clear funerals in localStorage:', err);
   }
@@ -298,23 +348,43 @@ export function getStoredDonations(): DonationDistributionRecord[] {
   }
 }
 
-export function saveStoredDonations(donations: DonationDistributionRecord[]): void {
+export function getRecoveryDonations(): DonationDistributionRecord[] {
   try {
-    localStorage.setItem(DONATION_STORAGE_KEY, JSON.stringify(donations));
-  } catch (err) {
-    console.warn('localStorage quota exceeded when saving donations, retrying without embedded media:', err);
-    try {
-      const compact = donations.map((d) => ({ ...d, photos: [], documents: [] }));
-      localStorage.setItem(DONATION_STORAGE_KEY, JSON.stringify(compact));
-    } catch (innerErr) {
-      console.error('Failed to save compact donations to localStorage:', innerErr);
-    }
+    const raw = localStorage.getItem(RECOVERY_DONATIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
 
-export function clearAllStoredDonations(): void {
+export function saveStoredDonations(donations: DonationDistributionRecord[]): void {
+  const saveToKey = (key: string) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(donations));
+    } catch (err) {
+      console.warn(`localStorage quota exceeded when saving ${key}, retrying without embedded media:`, err);
+      try {
+        const compact = donations.map((d) => ({ ...d, photos: [], documents: [] }));
+        localStorage.setItem(key, JSON.stringify(compact));
+      } catch (innerErr) {
+        console.error(`Failed to save compact donations to ${key}:`, innerErr);
+      }
+    }
+  };
+  saveToKey(DONATION_STORAGE_KEY);
+  if (donations.length > 0) {
+    saveToKey(RECOVERY_DONATIONS_KEY);
+  }
+}
+
+export function clearAllStoredDonations(includeRecovery: boolean = false): void {
   try {
     localStorage.setItem(DONATION_STORAGE_KEY, JSON.stringify([]));
+    if (includeRecovery) {
+      localStorage.removeItem(RECOVERY_DONATIONS_KEY);
+    }
   } catch (err) {
     console.error('Failed to clear donations in localStorage:', err);
   }
@@ -420,14 +490,15 @@ export function exportBackupJson(
   funerals: FuneralAssistanceRecord[] = [],
   donations: DonationDistributionRecord[] = []
 ): void {
+  const sortedPatients = sortPatientsByCodeAsc(patients);
   const data = {
     exportedAt: new Date().toISOString(),
     system: 'BD-Care โครงการใจถึงใจ บริจาคสิ่งของ และอนุเคราะห์เผาศพ มูลนิธิร่วมกุศลสมุทรปราการ',
     version: '1.2.0',
-    totalPatients: patients.length,
+    totalPatients: sortedPatients.length,
     totalFunerals: funerals.length,
     totalDonations: donations.length,
-    patients,
+    patients: sortedPatients,
     funerals,
     donations,
   };
@@ -588,6 +659,11 @@ export function getKnownSyncedIds(): KnownSyncedIds {
     const raw = localStorage.getItem(KNOWN_SYNCED_KEY);
     if (!raw) return { patients: [], funerals: [], donations: [] };
     const parsed = JSON.parse(raw);
+    // Invalidate known-synced list if stored under a different Firebase project/database
+    // so local records are safely uploaded rather than wiped by an empty new DB snapshot
+    if (parsed?.dbScope !== KNOWN_SYNCED_SCOPE) {
+      return { patients: [], funerals: [], donations: [] };
+    }
     return {
       patients: Array.isArray(parsed?.patients) ? parsed.patients : [],
       funerals: Array.isArray(parsed?.funerals) ? parsed.funerals : [],
@@ -600,7 +676,10 @@ export function getKnownSyncedIds(): KnownSyncedIds {
 
 export function saveKnownSyncedIds(ids: KnownSyncedIds): void {
   try {
-    localStorage.setItem(KNOWN_SYNCED_KEY, JSON.stringify(ids));
+    localStorage.setItem(
+      KNOWN_SYNCED_KEY,
+      JSON.stringify({ ...ids, dbScope: KNOWN_SYNCED_SCOPE })
+    );
   } catch {
     /* ignore */
   }
