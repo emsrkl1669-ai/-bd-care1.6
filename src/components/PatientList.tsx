@@ -17,8 +17,17 @@ import {
   Navigation,
   UserPlus,
   RefreshCw,
+  Upload,
 } from 'lucide-react';
-import { PatientRecord, SAMUT_PRAKAN_DISTRICTS, MobilityLevel, PatientStatus, AdminUser } from '../types';
+import {
+  PatientRecord,
+  SAMUT_PRAKAN_DISTRICTS,
+  MobilityLevel,
+  PatientStatus,
+  AdminUser,
+  FuneralAssistanceRecord,
+  DonationDistributionRecord,
+} from '../types';
 import {
   formatNationalId,
   formatPhone,
@@ -58,6 +67,11 @@ interface PatientListProps {
   onArchivePatient: (patientId: string, newStatus: PatientStatus, reason: string) => void;
   onAddNew?: () => void;
   onManualCloudSync?: () => void;
+  onImportBackup?: (
+    importedPatients: PatientRecord[],
+    importedFunerals?: FuneralAssistanceRecord[],
+    importedDonations?: DonationDistributionRecord[]
+  ) => void;
   currentAdmin: AdminUser;
 }
 
@@ -67,9 +81,11 @@ export const PatientList: React.FC<PatientListProps> = ({
   onArchivePatient,
   onAddNew,
   onManualCloudSync,
+  onImportBackup,
   currentAdmin,
 }) => {
   const { showToast } = useUiFeedback();
+  const restoreFileRef = React.useRef<HTMLInputElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDistrict, setSelectedDistrict] = useState<string>('all');
   const [selectedMobility, setSelectedMobility] = useState<string>('all');
@@ -638,6 +654,45 @@ export const PatientList: React.FC<PatientListProps> = ({
                 <RefreshCw className="w-3.5 h-3.5" />
                 ดึงข้อมูลคืน / ซิงค์ Cloud
               </button>
+            )}
+            {patients.length === 0 && onImportBackup && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => restoreFileRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  กู้คืนจากไฟล์ Backup (.json)
+                </button>
+                <input
+                  ref={restoreFileRef}
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                      try {
+                        const parsed = JSON.parse(String(ev.target?.result || ''));
+                        if (parsed && Array.isArray(parsed.patients)) {
+                          onImportBackup(parsed.patients, parsed.funerals, parsed.donations);
+                        } else if (Array.isArray(parsed)) {
+                          onImportBackup(parsed);
+                        } else {
+                          showToast('รูปแบบไฟล์ Backup JSON ไม่ถูกต้อง', 'error');
+                        }
+                      } catch {
+                        showToast('ไม่สามารถอ่านไฟล์ Backup JSON ได้', 'error');
+                      }
+                    };
+                    reader.readAsText(file);
+                    e.target.value = '';
+                  }}
+                />
+              </>
             )}
             {onAddNew && (
               <button

@@ -243,7 +243,19 @@ export function parsePatientCodeParts(code?: string): {
     }
   }
 
-  const onePart = clean.match(/(\d+)/);
+  const compactPart = clean.match(/^(?:BDC[\s\-]*)?(\d{2,4})(\d{3})\b/i);
+  if (compactPart) {
+    let year = parseInt(compactPart[1], 10);
+    if (year > 2400) {
+      year = Number(String(year).slice(-2));
+    }
+    const seq = parseInt(compactPart[2], 10);
+    if (Number.isFinite(year) && Number.isFinite(seq)) {
+      return { year, seq, hasNumbers: true, normalized: clean };
+    }
+  }
+
+  const onePart = clean.match(/(\d+)(?!.*\d)/);
   if (onePart) {
     const seq = parseInt(onePart[1], 10);
     if (Number.isFinite(seq)) {
@@ -260,15 +272,16 @@ export function parsePatientCodeParts(code?: string): {
 }
 
 /**
- * Compare two patient codes ascending (e.g. BDC-69-001 before BDC-69-018)
+ * Compare two patient codes ascending by trailing 3-digit running number first
+ * (e.g. 001 at top through 018 at bottom, regardless of year prefix).
  */
 export function comparePatientCodes(aCode?: string, bCode?: string): number {
   const a = parsePatientCodeParts(aCode);
   const b = parsePatientCodeParts(bCode);
 
   if (a.hasNumbers && b.hasNumbers) {
-    if (a.year !== b.year) return a.year - b.year;
     if (a.seq !== b.seq) return a.seq - b.seq;
+    if (a.year !== b.year) return a.year - b.year;
   } else if (a.hasNumbers !== b.hasNumbers) {
     return a.hasNumbers ? -1 : 1;
   }

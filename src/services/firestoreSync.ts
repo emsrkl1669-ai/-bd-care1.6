@@ -1772,6 +1772,26 @@ async function hydratePatient(
   return normalizeHydratedPatient(raw, deliveries, photos, documents);
 }
 
+async function hydratePatientSafe(
+  raw: Record<string, any>,
+  user: User,
+  fallbackLocal?: PatientRecord,
+  sourceDb: Firestore = db,
+  preferServer: boolean = false
+): Promise<PatientRecord> {
+  try {
+    return await hydratePatient(raw, user, fallbackLocal, sourceDb, preferServer);
+  } catch (err) {
+    console.warn(`Safe hydration fallback for patient ${raw?.id}:`, err);
+    return normalizeHydratedPatient(
+      raw,
+      fallbackLocal?.deliveries || [],
+      fallbackLocal?.photos || [],
+      fallbackLocal?.documents || []
+    );
+  }
+}
+
 async function hydrateFuneral(
   raw: Record<string, any>,
   user: User,
@@ -1930,7 +1950,9 @@ export function subscribeToCloudCollections(
         try {
           const localMap = new Map((handlers.getLocalPatients?.() || []).map((p) => [p.id, p]));
           const items = await Promise.all(
-            snap.docs.map((d) => hydratePatient({ ...d.data(), id: d.id }, user, localMap.get(d.id)))
+            snap.docs.map((d) =>
+              hydratePatientSafe({ ...d.data(), id: d.id }, user, localMap.get(d.id))
+            )
           );
           if (seq !== patientSeq) return;
           handlers.onPatients(sortPatientsByCodeAsc(items), snap.metadata.fromCache);
@@ -2155,17 +2177,16 @@ export async function syncLocalRecordsToCloud(
 
   const uploadedPatientIds: string[] = [];
   const pendingPatientSet = new Set(pendingOps.upserts.patients);
-  const knownPatientSet = new Set(knownSynced.patients);
   for (const pt of localPatients) {
     const safeId = sanitizeFirestoreId(pt.id, 'pt');
     const localTime = Date.parse(pt.updatedAt || pt.createdAt || '') || Date.now();
     const cloudTime = cloudPatientTimes.get(safeId);
     const isPending = pendingPatientSet.has(pt.id) || pendingPatientSet.has(safeId);
-    const wasPreviouslySynced = knownPatientSet.has(pt.id) || knownPatientSet.has(safeId);
 
+    // BD-Care never deletes patients (only archives via status), so any patient missing from Cloud must always upload
     const shouldUpload =
       isPending ||
-      (cloudTime === undefined && !wasPreviouslySynced) ||
+      cloudTime === undefined ||
       (cloudTime !== undefined && localTime > cloudTime && isPending);
 
     if (shouldUpload) {
@@ -2379,7 +2400,7 @@ export async function pullAllFromCloudServer(
   const [patients, funerals, donations] = await Promise.all([
     Promise.all(
       pSnap.docs.map((d: any) =>
-        hydratePatient({ ...d.data(), id: d.id }, user, localPatientMap.get(d.id), db, true)
+        hydratePatientSafe({ ...d.data(), id: d.id }, user, localPatientMap.get(d.id), db, true)
       )
     ),
     Promise.all(
@@ -2433,11 +2454,50 @@ export async function recoverFromDefaultDatabase(
   recoveredFunerals: FuneralAssistanceRecord[];
   recoveredDonations: DonationDistributionRecord[];
   recoveredCount: number;
+  defaultDbPatientCount: number;
+  defaultDbAccessError: boolean;
 }> {
   const recoveredPatients: PatientRecord[] = [];
   const recoveredFunerals: FuneralAssistanceRecord[] = [];
   const recoveredDonations: DonationDistributionRecord[] = [];
   let recoveredCount = 0;
+  let defaultDbPatientCount = 0;
+  let defaultDbAccessError = false;
+
+  const tryReadDefaultCollection = async (
+    colName: 'patients' | 'funerals' | 'donations'
+  ): Promise<QuerySnapshot<DocumentData> | null> => {
+    const userEmail = (user.email || '').trim().toLowerCase();
+    const attempts: Array<Query<DocumentData>> = [
+      collection(defaultDb, colName),
+      query(collection(defaultDb, colName), where('ownerUid', '==', user.uid)),
+      ...(userEmail
+        ? [query(collection(defaultDb, colName), where('authorizedEmails', 'array-contains', userEmail))]
+        : []),
+    ];
+
+    let sawPermError = false;
+    for (const q of attempts) {
+      try {
+        return await getDocsFromServer(q);
+      } catch (err: any) {
+        const msg = String(err?.message || '').toLowerCase();
+        if (msg.includes('permission') || msg.includes('insufficient')) {
+          sawPermError = true;
+        }
+        try {
+          const cachedSnap = await getDocs(q);
+          if (!cachedSnap.empty) return cachedSnap;
+        } catch {
+          /* continue to next query strategy */
+        }
+      }
+    }
+    if (sawPermError && colName === 'patients') {
+      defaultDbAccessError = true;
+    }
+    return null;
+  };
 
   try {
     const fullAccess = isFullAccessStaffUser(user);
@@ -2467,19 +2527,20 @@ export async function recoverFromDefaultDatabase(
     const existingFuneralIds = new Set<string>(targetFSnap ? targetFSnap.docs.map((d) => d.id) : []);
     const existingDonationIds = new Set<string>(targetDSnap ? targetDSnap.docs.map((d) => d.id) : []);
 
-    // Read (default) database collections in silent try/catch blocks
+    // Read (default) database collections using resilient fallbacks
     const [legacyPSnap, legacyFSnap, legacyDSnap] = await Promise.all([
-      getDocsFromServer(collection(defaultDb, 'patients')).catch(() => null),
-      getDocsFromServer(collection(defaultDb, 'funerals')).catch(() => null),
-      getDocsFromServer(collection(defaultDb, 'donations')).catch(() => null),
+      tryReadDefaultCollection('patients'),
+      tryReadDefaultCollection('funerals'),
+      tryReadDefaultCollection('donations'),
     ]);
 
     if (legacyPSnap && !legacyPSnap.empty) {
+      defaultDbPatientCount = legacyPSnap.docs.length;
       for (const d of legacyPSnap.docs) {
         const safeId = sanitizeFirestoreId(d.id, 'pt');
         if (existingPatientIds.has(d.id) || existingPatientIds.has(safeId)) continue;
         try {
-          const hydrated = await hydratePatient(
+          const hydrated = await hydratePatientSafe(
             { ...d.data(), id: safeId },
             user,
             undefined,
@@ -2545,5 +2606,7 @@ export async function recoverFromDefaultDatabase(
     recoveredFunerals,
     recoveredDonations,
     recoveredCount,
+    defaultDbPatientCount,
+    defaultDbAccessError,
   };
 }

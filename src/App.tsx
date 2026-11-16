@@ -376,7 +376,7 @@ function AppContent() {
               patientsRef.current,
               new Set(latestPending.upserts.patients),
               new Set(),
-              new Set(latestKnown.patients),
+              new Set(),
               true
             )
           );
@@ -445,9 +445,7 @@ function AppContent() {
           getLocalDonations: () => donationsRef.current,
           onPatients: (cloudPatients, fromCache) => {
             const pending = getPendingOps();
-            const known = getKnownSyncedIds();
             const pendingUpsertSet = new Set(pending.upserts.patients);
-            const knownSet = new Set(known.patients);
 
             setPatients((prevLocal) => {
               const next = sortPatientsByCodeAsc(
@@ -456,7 +454,7 @@ function AppContent() {
                   prevLocal,
                   pendingUpsertSet,
                   new Set(),
-                  knownSet,
+                  new Set(),
                   !fromCache
                 )
               );
@@ -832,7 +830,7 @@ function AppContent() {
           patientsRef.current,
           new Set(latestPending.upserts.patients),
           new Set(),
-          new Set(latestKnown.patients),
+          new Set(),
           true
         )
       );
@@ -886,12 +884,21 @@ function AppContent() {
         setCloudErrorReason(null);
         const recoveredMsg =
           legacyRecovery.recoveredCount > 0 ? `กู้คืน ${legacyRecovery.recoveredCount} รายการ • ` : '';
-        showToast(
-          res.uploaded > 0 || res.deleted > 0 || legacyRecovery.recoveredCount > 0
-            ? `${recoveredMsg}ซิงค์ข้อมูลตรงกันทุกเครื่องแล้ว (ผู้ป่วย ${nextPatients.length} ราย)`
-            : `ดึงข้อมูลล่าสุดตรงกับ Cloud ทุกเครื่องแล้ว (ผู้ป่วย ${nextPatients.length} ราย)`,
-          'success'
-        );
+        if (nextPatients.length === 0) {
+          showToast(
+            legacyRecovery.defaultDbAccessError
+              ? 'ยังไม่พบข้อมูลผู้ป่วยในฐานข้อมูลหลักและติดสิทธิ์เข้าถึงฐานข้อมูล (default) กรุณาใช้ไฟล์สำรอง JSON หรือเปิดเครื่องที่เคยบันทึกไว้'
+              : 'ไม่พบข้อมูลผู้ป่วยใน Cloud Firestore และแคชในเครื่องนี้ กรุณากู้คืนจากไฟล์ Backup JSON หรือเปิดจากเครื่องที่เคยบันทึกไว้เพื่อซิงค์',
+            'warning'
+          );
+        } else {
+          showToast(
+            res.uploaded > 0 || res.deleted > 0 || legacyRecovery.recoveredCount > 0
+              ? `${recoveredMsg}ซิงค์ข้อมูลตรงกันทุกเครื่องแล้ว (ผู้ป่วย ${nextPatients.length} ราย)`
+              : `ดึงข้อมูลล่าสุดตรงกับ Cloud ทุกเครื่องแล้ว (ผู้ป่วย ${nextPatients.length} ราย)`,
+            'success'
+          );
+        }
       }
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1943,6 +1950,7 @@ function AppContent() {
               setCurrentTab('new');
             }}
             onManualCloudSync={handleManualCloudSync}
+            onImportBackup={handleImportBackup}
             currentAdmin={currentAdmin}
           />
         )}
