@@ -41,6 +41,7 @@ import { PrintFormSK04 } from './PrintFormSK04';
 import { PrintHouseQrLabel } from './PrintHouseQrLabel';
 import { PrintRosterModal } from './PrintRosterModal';
 import { useUiFeedback } from './UiFeedback';
+import { parsePatientsFromCsv } from '../utils/csvPatientImport';
 
 function formatRosterCode(code: string): string {
   return (code || '')
@@ -663,20 +664,31 @@ export const PatientList: React.FC<PatientListProps> = ({
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  กู้คืนจากไฟล์ Backup (.json)
+                  นำเข้า / กู้คืน (.json / .csv)
                 </button>
                 <input
                   ref={restoreFileRef}
                   type="file"
-                  accept=".json"
+                  accept=".json,.csv"
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
+                    const isCsv = file.name.toLowerCase().endsWith('.csv');
                     const reader = new FileReader();
                     reader.onload = (ev) => {
                       try {
-                        const parsed = JSON.parse(String(ev.target?.result || ''));
+                        const text = String(ev.target?.result || '');
+                        if (isCsv) {
+                          const csvPatients = parsePatientsFromCsv(text);
+                          if (csvPatients.length > 0) {
+                            onImportBackup(csvPatients);
+                          } else {
+                            showToast('ไม่พบข้อมูลผู้ป่วยในไฟล์ CSV ที่เลือก', 'warning');
+                          }
+                          return;
+                        }
+                        const parsed = JSON.parse(text);
                         if (parsed && Array.isArray(parsed.patients)) {
                           onImportBackup(parsed.patients, parsed.funerals, parsed.donations);
                         } else if (Array.isArray(parsed)) {
@@ -685,7 +697,7 @@ export const PatientList: React.FC<PatientListProps> = ({
                           showToast('รูปแบบไฟล์ Backup JSON ไม่ถูกต้อง', 'error');
                         }
                       } catch {
-                        showToast('ไม่สามารถอ่านไฟล์ Backup JSON ได้', 'error');
+                        showToast('ไม่สามารถอ่านไฟล์ข้อมูลสำรองได้', 'error');
                       }
                     };
                     reader.readAsText(file);

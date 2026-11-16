@@ -38,6 +38,7 @@ import {
 import { LoginModal } from './LoginModal';
 import { useUiFeedback } from './UiFeedback';
 import { firebaseConfig } from '../firebase';
+import { parsePatientsFromCsv } from '../utils/csvPatientImport';
 
 interface HeaderProps {
   currentTab: string;
@@ -145,10 +146,21 @@ export const Header: React.FC<HeaderProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const isCsv = file.name.toLowerCase().endsWith('.csv');
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const text = event.target?.result as string;
+        const text = String(event.target?.result || '');
+        if (isCsv) {
+          const csvPatients = parsePatientsFromCsv(text);
+          if (csvPatients.length > 0) {
+            onImportBackup(csvPatients);
+            showToast(`นำเข้าและผสานข้อมูลจาก CSV สำเร็จ ${csvPatients.length} ราย`, 'success');
+          } else {
+            showToast('ไม่พบข้อมูลผู้ป่วยในไฟล์ CSV ที่เลือก', 'warning');
+          }
+          return;
+        }
         const parsed = JSON.parse(text);
         if (parsed && Array.isArray(parsed.patients)) {
           onImportBackup(parsed.patients, parsed.funerals, parsed.donations);
@@ -563,7 +575,7 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Upload className="w-4 h-4 text-amber-600" />
                   <div>
-                    <div className="font-semibold text-slate-800">กู้คืนฐานข้อมูล (Restore JSON)</div>
+                    <div className="font-semibold text-slate-800">นำเข้า / กู้คืนข้อมูล (.json / .csv)</div>
                   </div>
                 </button>
 
@@ -590,7 +602,7 @@ export const Header: React.FC<HeaderProps> = ({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".json"
+              accept=".json,.csv"
               onChange={handleFileChange}
               className="hidden"
             />

@@ -74,6 +74,12 @@ import { UiFeedbackProvider, useUiFeedback } from './components/UiFeedback';
 import { formatThaiDate, sortPatientsByCodeAsc } from './utils/idCard';
 import { sanitizeFirestoreId } from './utils/image';
 import {
+  attachQrCodesToPatients,
+  cleanDigitsKey,
+  mergeSeedPatientsIfMissing,
+  normalizePatientCodeKey,
+} from './utils/csvPatientImport';
+import {
   SUPER_ADMIN_USERNAME,
   firebaseConfig,
   isSuperAdminUser,
@@ -417,11 +423,41 @@ function AppContent() {
             saveStoredDeliverySettings(serverSnapshot.deliverySettings);
           }
 
+          let seededCount = 0;
+          const seedCheck = mergeSeedPatientsIfMissing(reconciledPatients);
+          let finalPatients = reconciledPatients;
+          if (seedCheck.added.length > 0) {
+            const addedWithQr = await attachQrCodesToPatients(seedCheck.added);
+            if (cancelled) return;
+            addedWithQr.forEach((p) => markPendingUpsert('patients', p.id));
+            finalPatients = sortPatientsByCodeAsc([...reconciledPatients, ...addedWithQr]);
+            patientsRef.current = finalPatients;
+            setPatients(finalPatients);
+            saveStoredPatients(finalPatients);
+
+            const seedSync = await syncLocalRecordsToCloud(
+              user,
+              addedWithQr,
+              [],
+              [],
+              undefined,
+              serverSnapshot.authorizedEmails
+            );
+            if (cancelled) return;
+            seededCount = seedSync.uploaded;
+          }
+
           setAuthorizedEmails(serverSnapshot.authorizedEmails);
           authorizedEmailsRef.current = serverSnapshot.authorizedEmails;
           setInitialCloudLoaded(true);
           setCloudErrorReason(null);
           setCloudStatus(migration.failed > 0 ? 'error' : 'synced');
+          if (seededCount > 0) {
+            showToast(
+              `เพิ่มข้อมูลผู้ป่วย ${seededCount} ราย และซิงค์ขึ้น Cloud สำหรับทุกเครื่องเรียบร้อยแล้ว`,
+              'success'
+            );
+          }
         } catch (pullErr) {
           console.warn('Initial authoritative pull deferred to real-time listener:', pullErr);
         }
@@ -871,12 +907,39 @@ function AppContent() {
         saveStoredDeliverySettings(serverSnapshot.deliverySettings);
       }
 
+      let finalNextPatients = nextPatients;
+      const seedCheck = mergeSeedPatientsIfMissing(nextPatients);
+      let seedUploadCount = 0;
+      let seedFailCount = 0;
+      if (seedCheck.added.length > 0) {
+        const addedWithQr = await attachQrCodesToPatients(seedCheck.added);
+        addedWithQr.forEach((p) => markPendingUpsert('patients', p.id));
+        finalNextPatients = sortPatientsByCodeAsc([...nextPatients, ...addedWithQr]);
+        patientsRef.current = finalNextPatients;
+        setPatients(finalNextPatients);
+        saveStoredPatients(finalNextPatients);
+
+        const seedSync = await syncLocalRecordsToCloud(
+          firebaseUser,
+          addedWithQr,
+          [],
+          [],
+          undefined,
+          teamEmails
+        );
+        seedUploadCount = seedSync.uploaded;
+        seedFailCount = seedSync.failed;
+      }
+
       setInitialCloudLoaded(true);
 
-      if (res.failed > 0) {
+      const totalFailed = res.failed + seedFailCount;
+      const totalUploaded = res.uploaded + seedUploadCount;
+
+      if (totalFailed > 0) {
         setCloudStatus('error');
         showToast(
-          `ซิงค์ขึ้น Cloud ไม่สำเร็จ ${res.failed} รายการ แต่ดึงข้อมูลล่าสุดจาก Server (${nextPatients.length} ราย) เรียบร้อยแล้ว`,
+          `ซิงค์ขึ้น Cloud ไม่สำเร็จ ${totalFailed} รายการ แต่ดึงข้อมูลล่าสุดจาก Server (${finalNextPatients.length} ราย) เรียบร้อยแล้ว`,
           'warning'
         );
       } else {
@@ -884,7 +947,7 @@ function AppContent() {
         setCloudErrorReason(null);
         const recoveredMsg =
           legacyRecovery.recoveredCount > 0 ? `กู้คืน ${legacyRecovery.recoveredCount} รายการ • ` : '';
-        if (nextPatients.length === 0) {
+        if (finalNextPatients.length === 0) {
           showToast(
             legacyRecovery.defaultDbAccessError
               ? 'ยังไม่พบข้อมูลผู้ป่วยในฐานข้อมูลหลักและติดสิทธิ์เข้าถึงฐานข้อมูล (default) กรุณาใช้ไฟล์สำรอง JSON หรือเปิดเครื่องที่เคยบันทึกไว้'
@@ -893,9 +956,9 @@ function AppContent() {
           );
         } else {
           showToast(
-            res.uploaded > 0 || res.deleted > 0 || legacyRecovery.recoveredCount > 0
-              ? `${recoveredMsg}ซิงค์ข้อมูลตรงกันทุกเครื่องแล้ว (ผู้ป่วย ${nextPatients.length} ราย)`
-              : `ดึงข้อมูลล่าสุดตรงกับ Cloud ทุกเครื่องแล้ว (ผู้ป่วย ${nextPatients.length} ราย)`,
+            totalUploaded > 0 || res.deleted > 0 || legacyRecovery.recoveredCount > 0
+              ? `${recoveredMsg}ซิงค์ข้อมูลตรงกันทุกเครื่องแล้ว (ผู้ป่วย ${finalNextPatients.length} ราย)`
+              : `ดึงข้อมูลล่าสุดตรงกับ Cloud ทุกเครื่องแล้ว (ผู้ป่วย ${finalNextPatients.length} ราย)`,
             'success'
           );
         }
@@ -1395,13 +1458,39 @@ function AppContent() {
     let nextDonations = donationsRef.current;
 
     if (importedPatients && Array.isArray(importedPatients)) {
-      const sanitizedPatients = importedPatients.map((p) => ({
-        ...p,
-        id: sanitizeFirestoreId(p.id, 'pt'),
-      }));
-      sanitizedPatients.forEach((p) => markPendingUpsert('patients', p.id));
+      const existingByCode = new Map<string, PatientRecord>();
+      const existingByNatId = new Map<string, PatientRecord>();
+      for (const existing of patientsRef.current) {
+        const ck = normalizePatientCodeKey(existing.code);
+        if (ck) existingByCode.set(ck, existing);
+        const nid = cleanDigitsKey(existing.nationalId);
+        if (nid.length === 13) existingByNatId.set(nid, existing);
+      }
+
+      const dedupedImported = importedPatients.map((p) => {
+        const ck = normalizePatientCodeKey(p.code);
+        const nid = cleanDigitsKey(p.nationalId);
+        const matched =
+          patientsRef.current.find((e) => e.id === p.id) ||
+          (ck ? existingByCode.get(ck) : undefined) ||
+          (nid.length === 13 ? existingByNatId.get(nid) : undefined);
+
+        const resolvedId = matched ? matched.id : sanitizeFirestoreId(p.id, 'pt');
+        return {
+          ...(matched || {}),
+          ...p,
+          id: resolvedId,
+          photos: p.photos && p.photos.length > 0 ? p.photos : matched?.photos || [],
+          documents: p.documents && p.documents.length > 0 ? p.documents : matched?.documents || [],
+          deliveries: p.deliveries && p.deliveries.length > 0 ? p.deliveries : matched?.deliveries || [],
+          qrCodeDataUrl: p.qrCodeDataUrl || matched?.qrCodeDataUrl || '',
+        };
+      });
+
+      const withQr = await attachQrCodesToPatients(dedupedImported);
+      withQr.forEach((p) => markPendingUpsert('patients', p.id));
       nextPatients = sortPatientsByCodeAsc(
-        mergeRecordsNonDestructively(sanitizedPatients, patientsRef.current)
+        mergeRecordsNonDestructively(withQr, patientsRef.current)
       );
       setPatients(nextPatients);
       patientsRef.current = nextPatients;
