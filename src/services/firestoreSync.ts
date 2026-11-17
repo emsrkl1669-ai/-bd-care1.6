@@ -794,53 +794,60 @@ export async function savePatientToCloud(
       await setDoc(patientRef, parentPayload);
     }
 
-    // Sync deliveries subcollection
-    const delCol = collection(db, 'patients', patientId, 'deliveries');
-    const delQuery = fullAccess
-      ? delCol
-      : query(delCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
-    const existingDelSnap = await getDocs(delQuery);
-    const existingDelMap = new Map<string, any>();
-    existingDelSnap.forEach((d) => existingDelMap.set(d.id, d.data()));
+    const hasDeliveries = (patient.deliveries?.length || 0) > 0;
+    const hasMedia = (patient.photos?.length || 0) > 0 || (patient.documents?.length || 0) > 0;
 
-    const desiredDelIds = new Set<string>();
-    for (const del of patient.deliveries || []) {
-      const delId = sanitizeFirestoreId(del.id, 'del');
-      desiredDelIds.add(delId);
-      const prevDel = existingDelMap.get(delId);
-      const delEmails = prevDel && !superAdmin ? prevDel.authorizedEmails : desiredEmails;
-      const delPayload = await serializeDeliveryDoc(
-        { ...del, id: delId },
-        patientId,
-        prevDel?.ownerUid || user.uid,
-        delEmails,
-        prevDel?.serverCreatedAt,
-        Boolean(prevDel)
-      );
-      await setDoc(doc(db, 'patients', patientId, 'deliveries', delId), delPayload);
-    }
+    if (existingData || hasDeliveries) {
+      // Sync deliveries subcollection
+      const delCol = collection(db, 'patients', patientId, 'deliveries');
+      const delQuery = fullAccess
+        ? delCol
+        : query(delCol, where('authorizedEmails', 'array-contains', (user.email || '').toLowerCase()));
+      const existingDelSnap = await getDocs(delQuery);
+      const existingDelMap = new Map<string, any>();
+      existingDelSnap.forEach((d) => existingDelMap.set(d.id, d.data()));
 
-    for (const [existingDelId] of existingDelMap.entries()) {
-      if (!desiredDelIds.has(existingDelId)) {
-        await deleteDoc(doc(db, 'patients', patientId, 'deliveries', existingDelId));
+      const desiredDelIds = new Set<string>();
+      for (const del of patient.deliveries || []) {
+        const delId = sanitizeFirestoreId(del.id, 'del');
+        desiredDelIds.add(delId);
+        const prevDel = existingDelMap.get(delId);
+        const delEmails = prevDel && !superAdmin ? prevDel.authorizedEmails : desiredEmails;
+        const delPayload = await serializeDeliveryDoc(
+          { ...del, id: delId },
+          patientId,
+          prevDel?.ownerUid || user.uid,
+          delEmails,
+          prevDel?.serverCreatedAt,
+          Boolean(prevDel)
+        );
+        await setDoc(doc(db, 'patients', patientId, 'deliveries', delId), delPayload);
+      }
+
+      for (const [existingDelId] of existingDelMap.entries()) {
+        if (!desiredDelIds.has(existingDelId)) {
+          await deleteDoc(doc(db, 'patients', patientId, 'deliveries', existingDelId));
+        }
       }
     }
 
-    // Sync media subcollection (photos + documents)
-    await syncMediaSubcollection(
-      'patients',
-      patientId,
-      user.uid,
-      user,
-      desiredEmails,
-      patient.photos || [],
-      patient.documents || []
-    );
+    if (existingData || hasMedia) {
+      // Sync media subcollection (photos + documents)
+      await syncMediaSubcollection(
+        'patients',
+        patientId,
+        user.uid,
+        user,
+        desiredEmails,
+        patient.photos || [],
+        patient.documents || []
+      );
+    }
 
     // Commit/touch parent AFTER subcollections so remote onSnapshot listeners hydrate complete data
     if (existingData) {
       await setDoc(patientRef, parentPayload);
-    } else if ((patient.deliveries?.length || 0) > 0 || (patient.photos?.length || 0) > 0 || (patient.documents?.length || 0) > 0) {
+    } else if (hasDeliveries || hasMedia) {
       await updateDoc(patientRef, { serverUpdatedAt: serverTimestamp() });
     }
   } catch (err) {

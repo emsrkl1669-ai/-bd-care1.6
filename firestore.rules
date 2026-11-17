@@ -237,13 +237,13 @@ service cloud.firestore {
         );
       allow update: if isSignedIn() &&
         isValidDeliveryPlanSettings(incoming()) &&
-        (!('id' in existing()) || incoming().id == existing().id) &&
-        (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : (isSuperAdmin() || incoming().ownerUid == existing().ownerUid)) &&
-        (!('serverCreatedAt' in existing()) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
         incoming().serverUpdatedAt == request.time &&
         (
           isSuperAdmin() ||
           (
+            (!('id' in existing()) || incoming().id == existing().id) &&
+            (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'ricePricePerBag', 'customRiceCount', 'currentMonth', 'updatedAt', 'serverUpdatedAt'
@@ -428,14 +428,14 @@ service cloud.firestore {
       allow update: if isAuthorizedStaff() &&
         isValidId(patientId) &&
         isValidPatientRecord(incoming(), patientId) &&
-        (!('id' in existing()) || incoming().id == existing().id) &&
-        (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : (isSuperAdmin() || incoming().ownerUid == existing().ownerUid)) &&
-        (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
-        (!('serverCreatedAt' in existing()) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
         incoming().serverUpdatedAt == request.time &&
         (
           isSuperAdmin() ||
           (
+            (!('id' in existing()) || incoming().id == existing().id) &&
+            (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
+            (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'code', 'admissionDate', 'status', 'statusReason', 'statusHistory',
@@ -484,12 +484,12 @@ service cloud.firestore {
           isValidId(patientId) &&
           isValidId(deliveryId) &&
           isValidPatientDelivery(incoming(), patientId, deliveryId) &&
-          (!('id' in existing()) || incoming().id == existing().id) &&
-          (!('patientId' in existing()) || incoming().patientId == existing().patientId) &&
-          (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : (isSuperAdmin() || incoming().ownerUid == existing().ownerUid)) &&
-          (!('serverCreatedAt' in existing()) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
           incoming().serverUpdatedAt == request.time &&
           (isSuperAdmin() || (
+            (!('id' in existing()) || incoming().id == existing().id) &&
+            (!('patientId' in existing()) || incoming().patientId == existing().patientId) &&
+            (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'deliveryDate', 'monthYearLabel', 'cashAmount', 'cashGiven',
@@ -526,12 +526,12 @@ service cloud.firestore {
           isValidId(patientId) &&
           isValidId(mediaId) &&
           isValidMediaAttachment(incoming(), patientId, mediaId) &&
-          (!('id' in existing()) || incoming().id == existing().id) &&
-          (!('parentId' in existing()) || incoming().parentId == existing().parentId) &&
-          (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : (isSuperAdmin() || incoming().ownerUid == existing().ownerUid)) &&
-          (!('serverCreatedAt' in existing()) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
           incoming().serverUpdatedAt == request.time &&
           (isSuperAdmin() || (
+            (!('id' in existing()) || incoming().id == existing().id) &&
+            (!('parentId' in existing()) || incoming().parentId == existing().parentId) &&
+            (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'category', 'caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'timestamp', 'uploadDate', 'serverUpdatedAt'
@@ -615,14 +615,14 @@ service cloud.firestore {
       allow update: if isAuthorizedStaff() &&
         isValidId(funeralId) &&
         isValidFuneralRecord(incoming(), funeralId) &&
-        (!('id' in existing()) || incoming().id == existing().id) &&
-        (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : (isSuperAdmin() || incoming().ownerUid == existing().ownerUid)) &&
-        (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
-        (!('serverCreatedAt' in existing()) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
         incoming().serverUpdatedAt == request.time &&
         (
           isSuperAdmin() ||
           (
+            (!('id' in existing()) || incoming().id == existing().id) &&
+            (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
+            (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || (!(existing().status in ['completed', 'rejected']) && (isOwner(existing()) || isSharedTeamMember(existing())))) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'code', 'applicationDate', 'status', 'statusNote',
@@ -664,12 +664,12 @@ service cloud.firestore {
           isValidId(funeralId) &&
           isValidId(mediaId) &&
           isValidMediaAttachment(incoming(), funeralId, mediaId) &&
-          (!('id' in existing()) || incoming().id == existing().id) &&
-          (!('parentId' in existing()) || incoming().parentId == existing().parentId) &&
-          (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : (isSuperAdmin() || incoming().ownerUid == existing().ownerUid)) &&
-          (!('serverCreatedAt' in existing()) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
           incoming().serverUpdatedAt == request.time &&
           (isSuperAdmin() || (
+            (!('id' in existing()) || incoming().id == existing().id) &&
+            (!('parentId' in existing()) || incoming().parentId == existing().parentId) &&
+            (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'category', 'caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'timestamp', 'uploadDate', 'serverUpdatedAt'
@@ -755,14 +755,14 @@ service cloud.firestore {
       allow update: if isAuthorizedStaff() &&
         isValidId(donationId) &&
         isValidDonationRecord(incoming(), donationId) &&
-        (!('id' in existing()) || incoming().id == existing().id) &&
-        (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : (isSuperAdmin() || incoming().ownerUid == existing().ownerUid)) &&
-        (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
-        (!('serverCreatedAt' in existing()) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
         incoming().serverUpdatedAt == request.time &&
         (
           isSuperAdmin() ||
           (
+            (!('id' in existing()) || incoming().id == existing().id) &&
+            (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
+            (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || (existing().status != 'cancelled' && (isOwner(existing()) || isSharedTeamMember(existing())))) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'code', 'distributionDate', 'status', 'recipientType',
@@ -805,12 +805,12 @@ service cloud.firestore {
           isValidId(donationId) &&
           isValidId(mediaId) &&
           isValidMediaAttachment(incoming(), donationId, mediaId) &&
-          (!('id' in existing()) || incoming().id == existing().id) &&
-          (!('parentId' in existing()) || incoming().parentId == existing().parentId) &&
-          (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : (isSuperAdmin() || incoming().ownerUid == existing().ownerUid)) &&
-          (!('serverCreatedAt' in existing()) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
           incoming().serverUpdatedAt == request.time &&
           (isSuperAdmin() || (
+            (!('id' in existing()) || incoming().id == existing().id) &&
+            (!('parentId' in existing()) || incoming().parentId == existing().parentId) &&
+            (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'category', 'caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'timestamp', 'uploadDate', 'serverUpdatedAt'
