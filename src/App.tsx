@@ -32,14 +32,17 @@ import {
 import {
   getStoredPatients,
   saveStoredPatients,
+  saveExactStoredPatients,
   clearAllStoredPatients,
   getRecoveryPatients,
   getStoredFunerals,
   saveStoredFunerals,
+  saveExactStoredFunerals,
   clearAllStoredFunerals,
   getRecoveryFunerals,
   getStoredDonations,
   saveStoredDonations,
+  saveExactStoredDonations,
   clearAllStoredDonations,
   getRecoveryDonations,
   getStoredAdminId,
@@ -281,180 +284,278 @@ function AppContent() {
         setAuthorizedEmails(teamEmails);
         authorizedEmailsRef.current = teamEmails;
 
-        // Recover any locally preserved snapshots (e.g. from prior session / DB transition) before syncing
-        const pendingDeletes = getPendingOps().deletes;
-        const recoveryPatients = getRecoveryPatients();
-        if (recoveryPatients.length > 0) {
-          const mergedLocalPatients = sortPatientsByCodeAsc(
-            mergeRecordsNonDestructively(recoveryPatients, patientsRef.current)
-          );
-          patientsRef.current = mergedLocalPatients;
-          setPatients(mergedLocalPatients);
-          saveStoredPatients(mergedLocalPatients);
-        }
-        const recoveryFunerals = getRecoveryFunerals();
-        if (recoveryFunerals.length > 0) {
-          const mergedLocalFunerals = mergeRecordsNonDestructively(
-            recoveryFunerals,
-            funeralsRef.current,
-            new Set(pendingDeletes.funerals)
-          );
-          funeralsRef.current = mergedLocalFunerals;
-          setFunerals(mergedLocalFunerals);
-          saveStoredFunerals(mergedLocalFunerals);
-        }
-        const recoveryDonations = getRecoveryDonations();
-        if (recoveryDonations.length > 0) {
-          const mergedLocalDonations = mergeRecordsNonDestructively(
-            recoveryDonations,
-            donationsRef.current,
-            new Set(pendingDeletes.donations)
-          );
-          donationsRef.current = mergedLocalDonations;
-          setDonations(mergedLocalDonations);
-          saveStoredDonations(mergedLocalDonations);
-        }
+        // 1. FORCE FETCH directly from Cloud Firestore Server FIRST (never wait for localStorage)
+        let migration = { uploaded: 0, deleted: 0, failed: 0 };
+        let initialSeededCount = 0;
 
-        // Migrate any legacy records stored on the project's (default) Firestore database
-        const legacyRecovery = await recoverFromDefaultDatabase(user, teamEmails);
-        if (cancelled) return;
-        if (legacyRecovery.recoveredCount > 0) {
-          if (legacyRecovery.recoveredPatients.length > 0) {
-            const nextP = sortPatientsByCodeAsc(
-              mergeRecordsNonDestructively(legacyRecovery.recoveredPatients, patientsRef.current)
-            );
-            patientsRef.current = nextP;
-            setPatients(nextP);
-            saveStoredPatients(nextP);
-          }
-          if (legacyRecovery.recoveredFunerals.length > 0) {
-            const nextF = mergeRecordsNonDestructively(
-              legacyRecovery.recoveredFunerals,
-              funeralsRef.current,
-              new Set(pendingDeletes.funerals)
-            );
-            funeralsRef.current = nextF;
-            setFunerals(nextF);
-            saveStoredFunerals(nextF);
-          }
-          if (legacyRecovery.recoveredDonations.length > 0) {
-            const nextD = mergeRecordsNonDestructively(
-              legacyRecovery.recoveredDonations,
-              donationsRef.current,
-              new Set(pendingDeletes.donations)
-            );
-            donationsRef.current = nextD;
-            setDonations(nextD);
-            saveStoredDonations(nextD);
-          }
-          showToast(
-            `กู้คืนข้อมูลจากฐานข้อมูลเดิมสำเร็จ ${legacyRecovery.recoveredCount} รายการ`,
-            'success'
-          );
-        }
-
-        // Flush pending offline deletes & upload any unsynced local/recovered records first
-        const migration = await syncLocalRecordsToCloud(
-          user,
-          patientsRef.current,
-          funeralsRef.current,
-          donationsRef.current,
-          deliverySettingsRef.current,
-          teamEmails
-        );
-        if (cancelled) return;
-
-        // Immediately pull authoritative dataset from Cloud Server so all devices see identical data
         try {
-          const serverSnapshot = await pullAllFromCloudServer(user, {
+          const initialServerSnapshot = await pullAllFromCloudServer(user, {
             patients: patientsRef.current,
             funerals: funeralsRef.current,
             donations: donationsRef.current,
           });
           if (cancelled) return;
 
-          const latestPending = getPendingOps();
-          const latestKnown = getKnownSyncedIds();
+          const pendingAtBoot = getPendingOps();
+          const hasPendingBootOps =
+            pendingAtBoot.upserts.patients.length > 0 ||
+            pendingAtBoot.upserts.funerals.length > 0 ||
+            pendingAtBoot.upserts.donations.length > 0 ||
+            pendingAtBoot.upserts.deliverySettings ||
+            pendingAtBoot.deletes.funerals.length > 0 ||
+            pendingAtBoot.deletes.donations.length > 0;
 
-          const reconciledPatients = sortPatientsByCodeAsc(
-            reconcileWithCloudSnapshot(
-              serverSnapshot.patients,
-              patientsRef.current,
-              new Set(latestPending.upserts.patients),
-              new Set(),
-              new Set(),
+          // If Cloud already has patient records, mirror Cloud immediately and overwrite stale localStorage
+          if (initialServerSnapshot.patients.length > 0) {
+            const latestKnown = getKnownSyncedIds();
+            const mirroredPatients = sortPatientsByCodeAsc(
+              reconcileWithCloudSnapshot(
+                initialServerSnapshot.patients,
+                patientsRef.current,
+                new Set(pendingAtBoot.upserts.patients),
+                new Set(),
+                new Set(latestKnown.patients),
+                true,
+                true
+              )
+            );
+            patientsRef.current = mirroredPatients;
+            setPatients(mirroredPatients);
+            saveExactStoredPatients(mirroredPatients);
+            replaceKnownSyncedIds('patients', initialServerSnapshot.patients.map((p) => p.id));
+
+            const mirroredFunerals = reconcileWithCloudSnapshot(
+              initialServerSnapshot.funerals,
+              funeralsRef.current,
+              new Set(pendingAtBoot.upserts.funerals),
+              new Set(pendingAtBoot.deletes.funerals),
+              new Set(latestKnown.funerals),
+              true,
               true
-            )
-          );
-          patientsRef.current = reconciledPatients;
-          setPatients(reconciledPatients);
-          saveStoredPatients(reconciledPatients);
-          replaceKnownSyncedIds('patients', serverSnapshot.patients.map((p) => p.id));
+            );
+            funeralsRef.current = mirroredFunerals;
+            setFunerals(mirroredFunerals);
+            saveExactStoredFunerals(mirroredFunerals);
+            replaceKnownSyncedIds('funerals', initialServerSnapshot.funerals.map((f) => f.id));
 
-          const reconciledFunerals = reconcileWithCloudSnapshot(
-            serverSnapshot.funerals,
-            funeralsRef.current,
-            new Set(latestPending.upserts.funerals),
-            new Set(latestPending.deletes.funerals),
-            new Set(latestKnown.funerals),
-            true
-          );
-          funeralsRef.current = reconciledFunerals;
-          setFunerals(reconciledFunerals);
-          saveStoredFunerals(reconciledFunerals);
-          replaceKnownSyncedIds('funerals', serverSnapshot.funerals.map((f) => f.id));
+            const mirroredDonations = reconcileWithCloudSnapshot(
+              initialServerSnapshot.donations,
+              donationsRef.current,
+              new Set(pendingAtBoot.upserts.donations),
+              new Set(pendingAtBoot.deletes.donations),
+              new Set(latestKnown.donations),
+              true,
+              true
+            );
+            donationsRef.current = mirroredDonations;
+            setDonations(mirroredDonations);
+            saveExactStoredDonations(mirroredDonations);
+            replaceKnownSyncedIds('donations', initialServerSnapshot.donations.map((d) => d.id));
 
-          const reconciledDonations = reconcileWithCloudSnapshot(
-            serverSnapshot.donations,
-            donationsRef.current,
-            new Set(latestPending.upserts.donations),
-            new Set(latestPending.deletes.donations),
-            new Set(latestKnown.donations),
-            true
-          );
-          donationsRef.current = reconciledDonations;
-          setDonations(reconciledDonations);
-          saveStoredDonations(reconciledDonations);
-          replaceKnownSyncedIds('donations', serverSnapshot.donations.map((d) => d.id));
+            if (initialServerSnapshot.deliverySettings && !pendingAtBoot.upserts.deliverySettings) {
+              setDeliverySettings(initialServerSnapshot.deliverySettings);
+              deliverySettingsRef.current = initialServerSnapshot.deliverySettings;
+              saveStoredDeliverySettings(initialServerSnapshot.deliverySettings);
+            }
 
-          if (serverSnapshot.deliverySettings && !latestPending.upserts.deliverySettings) {
-            setDeliverySettings(serverSnapshot.deliverySettings);
-            deliverySettingsRef.current = serverSnapshot.deliverySettings;
-            saveStoredDeliverySettings(serverSnapshot.deliverySettings);
-          }
+            setAuthorizedEmails(initialServerSnapshot.authorizedEmails);
+            authorizedEmailsRef.current = initialServerSnapshot.authorizedEmails;
 
-          let seededCount = 0;
-          const seedCheck = mergeSeedPatientsIfMissing(reconciledPatients);
-          let finalPatients = reconciledPatients;
-          if (seedCheck.added.length > 0) {
-            const addedWithQr = await attachQrCodesToPatients(seedCheck.added);
+            // Seed missing CSV records only if they are missing from Cloud
+            const seedCheck = mergeSeedPatientsIfMissing(mirroredPatients);
+            if (seedCheck.added.length > 0) {
+              const addedWithQr = await attachQrCodesToPatients(seedCheck.added);
+              if (cancelled) return;
+              addedWithQr.forEach((p) => markPendingUpsert('patients', p.id));
+              const withSeed = sortPatientsByCodeAsc([...mirroredPatients, ...addedWithQr]);
+              patientsRef.current = withSeed;
+              setPatients(withSeed);
+              saveExactStoredPatients(withSeed);
+
+              const seedSync = await syncLocalRecordsToCloud(
+                user,
+                addedWithQr,
+                [],
+                [],
+                undefined,
+                initialServerSnapshot.authorizedEmails
+              );
+              if (cancelled) return;
+              initialSeededCount = seedSync.uploaded;
+            }
+
+            // Flush only genuine offline edits / deletes if any exist
+            if (hasPendingBootOps) {
+              migration = await syncLocalRecordsToCloud(
+                user,
+                patientsRef.current,
+                funeralsRef.current,
+                donationsRef.current,
+                deliverySettingsRef.current,
+                teamEmails
+              );
+              if (cancelled) return;
+            }
+          } else {
+            // Cloud has 0 patients on server: safely recover from (default) DB / local recovery / CSV seed and upload
+            const pendingDeletes = pendingAtBoot.deletes;
+            const recoveryPatients = getRecoveryPatients();
+            if (recoveryPatients.length > 0) {
+              const mergedLocalPatients = sortPatientsByCodeAsc(
+                mergeRecordsNonDestructively(recoveryPatients, patientsRef.current)
+              );
+              patientsRef.current = mergedLocalPatients;
+              setPatients(mergedLocalPatients);
+              saveStoredPatients(mergedLocalPatients);
+            }
+            const recoveryFunerals = getRecoveryFunerals();
+            if (recoveryFunerals.length > 0) {
+              const mergedLocalFunerals = mergeRecordsNonDestructively(
+                recoveryFunerals,
+                funeralsRef.current,
+                new Set(pendingDeletes.funerals)
+              );
+              funeralsRef.current = mergedLocalFunerals;
+              setFunerals(mergedLocalFunerals);
+              saveStoredFunerals(mergedLocalFunerals);
+            }
+            const recoveryDonations = getRecoveryDonations();
+            if (recoveryDonations.length > 0) {
+              const mergedLocalDonations = mergeRecordsNonDestructively(
+                recoveryDonations,
+                donationsRef.current,
+                new Set(pendingDeletes.donations)
+              );
+              donationsRef.current = mergedLocalDonations;
+              setDonations(mergedLocalDonations);
+              saveStoredDonations(mergedLocalDonations);
+            }
+
+            const legacyRecovery = await recoverFromDefaultDatabase(user, teamEmails);
             if (cancelled) return;
-            addedWithQr.forEach((p) => markPendingUpsert('patients', p.id));
-            finalPatients = sortPatientsByCodeAsc([...reconciledPatients, ...addedWithQr]);
-            patientsRef.current = finalPatients;
-            setPatients(finalPatients);
-            saveStoredPatients(finalPatients);
+            if (legacyRecovery.recoveredCount > 0) {
+              if (legacyRecovery.recoveredPatients.length > 0) {
+                const nextP = sortPatientsByCodeAsc(
+                  mergeRecordsNonDestructively(legacyRecovery.recoveredPatients, patientsRef.current)
+                );
+                patientsRef.current = nextP;
+                setPatients(nextP);
+                saveStoredPatients(nextP);
+              }
+              if (legacyRecovery.recoveredFunerals.length > 0) {
+                const nextF = mergeRecordsNonDestructively(
+                  legacyRecovery.recoveredFunerals,
+                  funeralsRef.current,
+                  new Set(pendingDeletes.funerals)
+                );
+                funeralsRef.current = nextF;
+                setFunerals(nextF);
+                saveStoredFunerals(nextF);
+              }
+              if (legacyRecovery.recoveredDonations.length > 0) {
+                const nextD = mergeRecordsNonDestructively(
+                  legacyRecovery.recoveredDonations,
+                  donationsRef.current,
+                  new Set(pendingDeletes.donations)
+                );
+                donationsRef.current = nextD;
+                setDonations(nextD);
+                saveStoredDonations(nextD);
+              }
+            }
 
-            const seedSync = await syncLocalRecordsToCloud(
+            const seedCheck = mergeSeedPatientsIfMissing(patientsRef.current);
+            if (seedCheck.added.length > 0) {
+              const addedWithQr = await attachQrCodesToPatients(seedCheck.added);
+              if (cancelled) return;
+              addedWithQr.forEach((p) => markPendingUpsert('patients', p.id));
+              const nextWithSeed = sortPatientsByCodeAsc([...patientsRef.current, ...addedWithQr]);
+              patientsRef.current = nextWithSeed;
+              setPatients(nextWithSeed);
+              saveStoredPatients(nextWithSeed);
+            }
+
+            migration = await syncLocalRecordsToCloud(
               user,
-              addedWithQr,
-              [],
-              [],
-              undefined,
-              serverSnapshot.authorizedEmails
+              patientsRef.current,
+              funeralsRef.current,
+              donationsRef.current,
+              deliverySettingsRef.current,
+              teamEmails
             );
             if (cancelled) return;
-            seededCount = seedSync.uploaded;
+
+            // Re-pull authoritative server state after initial bootstrap upload
+            const refreshedServer = await pullAllFromCloudServer(user, {
+              patients: patientsRef.current,
+              funerals: funeralsRef.current,
+              donations: donationsRef.current,
+            });
+            if (cancelled) return;
+
+            const latestPending = getPendingOps();
+            const latestKnown = getKnownSyncedIds();
+
+            const finalPatients = sortPatientsByCodeAsc(
+              reconcileWithCloudSnapshot(
+                refreshedServer.patients,
+                patientsRef.current,
+                new Set(latestPending.upserts.patients),
+                new Set(),
+                new Set(latestKnown.patients),
+                true,
+                true
+              )
+            );
+            patientsRef.current = finalPatients;
+            setPatients(finalPatients);
+            saveExactStoredPatients(finalPatients);
+            replaceKnownSyncedIds('patients', refreshedServer.patients.map((p) => p.id));
+
+            const finalFunerals = reconcileWithCloudSnapshot(
+              refreshedServer.funerals,
+              funeralsRef.current,
+              new Set(latestPending.upserts.funerals),
+              new Set(latestPending.deletes.funerals),
+              new Set(latestKnown.funerals),
+              true,
+              true
+            );
+            funeralsRef.current = finalFunerals;
+            setFunerals(finalFunerals);
+            saveExactStoredFunerals(finalFunerals);
+            replaceKnownSyncedIds('funerals', refreshedServer.funerals.map((f) => f.id));
+
+            const finalDonations = reconcileWithCloudSnapshot(
+              refreshedServer.donations,
+              donationsRef.current,
+              new Set(latestPending.upserts.donations),
+              new Set(latestPending.deletes.donations),
+              new Set(latestKnown.donations),
+              true,
+              true
+            );
+            donationsRef.current = finalDonations;
+            setDonations(finalDonations);
+            saveExactStoredDonations(finalDonations);
+            replaceKnownSyncedIds('donations', refreshedServer.donations.map((d) => d.id));
+
+            if (refreshedServer.deliverySettings && !latestPending.upserts.deliverySettings) {
+              setDeliverySettings(refreshedServer.deliverySettings);
+              deliverySettingsRef.current = refreshedServer.deliverySettings;
+              saveStoredDeliverySettings(refreshedServer.deliverySettings);
+            }
+
+            setAuthorizedEmails(refreshedServer.authorizedEmails);
+            authorizedEmailsRef.current = refreshedServer.authorizedEmails;
           }
 
-          setAuthorizedEmails(serverSnapshot.authorizedEmails);
-          authorizedEmailsRef.current = serverSnapshot.authorizedEmails;
           setInitialCloudLoaded(true);
           setCloudErrorReason(null);
           setCloudStatus(migration.failed > 0 ? 'error' : 'synced');
-          if (seededCount > 0) {
+          if (initialSeededCount > 0) {
             showToast(
-              `เพิ่มข้อมูลผู้ป่วย ${seededCount} ราย และซิงค์ขึ้น Cloud สำหรับทุกเครื่องเรียบร้อยแล้ว`,
+              `ซิงค์ข้อมูลผู้ป่วย ${patientsRef.current.length} รายจาก Cloud และเพิ่มรายการที่ขาด ${initialSeededCount} รายเรียบร้อยแล้ว`,
               'success'
             );
           }
@@ -481,6 +582,7 @@ function AppContent() {
           getLocalDonations: () => donationsRef.current,
           onPatients: (cloudPatients, fromCache) => {
             const pending = getPendingOps();
+            const known = getKnownSyncedIds();
             const pendingUpsertSet = new Set(pending.upserts.patients);
 
             setPatients((prevLocal) => {
@@ -490,12 +592,17 @@ function AppContent() {
                   prevLocal,
                   pendingUpsertSet,
                   new Set(),
-                  new Set(),
+                  new Set(known.patients),
+                  !fromCache,
                   !fromCache
                 )
               );
               patientsRef.current = next;
-              saveStoredPatients(next);
+              if (!fromCache) {
+                saveExactStoredPatients(next);
+              } else {
+                saveStoredPatients(next);
+              }
               return next;
             });
 
@@ -523,10 +630,15 @@ function AppContent() {
                 pendingUpsertSet,
                 pendingDeleteSet,
                 knownSet,
+                !fromCache,
                 !fromCache
               );
               funeralsRef.current = next;
-              saveStoredFunerals(next);
+              if (!fromCache) {
+                saveExactStoredFunerals(next);
+              } else {
+                saveStoredFunerals(next);
+              }
               return next;
             });
 
@@ -554,10 +666,15 @@ function AppContent() {
                 pendingUpsertSet,
                 pendingDeleteSet,
                 knownSet,
+                !fromCache,
                 !fromCache
               );
               donationsRef.current = next;
-              saveStoredDonations(next);
+              if (!fromCache) {
+                saveExactStoredDonations(next);
+              } else {
+                saveStoredDonations(next);
+              }
               return next;
             });
 
@@ -798,64 +915,100 @@ function AppContent() {
       setAuthorizedEmails(teamEmails);
       authorizedEmailsRef.current = teamEmails;
 
-      // Include local recovery snapshot patients if any are missing from state
-      const pendingDeletes = getPendingOps().deletes;
-      const recoveryPatients = getRecoveryPatients();
-      if (recoveryPatients.length > 0) {
-        const mergedLocal = sortPatientsByCodeAsc(
-          mergeRecordsNonDestructively(recoveryPatients, patientsRef.current)
-        );
-        patientsRef.current = mergedLocal;
-        setPatients(mergedLocal);
-        saveStoredPatients(mergedLocal);
-      }
-
-      // Check (default) Firestore DB for any legacy unmigrated records
-      const legacyRecovery = await recoverFromDefaultDatabase(firebaseUser, teamEmails);
-      if (legacyRecovery.recoveredPatients.length > 0) {
-        const mergedP = sortPatientsByCodeAsc(
-          mergeRecordsNonDestructively(legacyRecovery.recoveredPatients, patientsRef.current)
-        );
-        patientsRef.current = mergedP;
-        setPatients(mergedP);
-        saveStoredPatients(mergedP);
-      }
-      if (legacyRecovery.recoveredFunerals.length > 0) {
-        const mergedF = mergeRecordsNonDestructively(
-          legacyRecovery.recoveredFunerals,
-          funeralsRef.current,
-          new Set(pendingDeletes.funerals)
-        );
-        funeralsRef.current = mergedF;
-        setFunerals(mergedF);
-        saveStoredFunerals(mergedF);
-      }
-      if (legacyRecovery.recoveredDonations.length > 0) {
-        const mergedD = mergeRecordsNonDestructively(
-          legacyRecovery.recoveredDonations,
-          donationsRef.current,
-          new Set(pendingDeletes.donations)
-        );
-        donationsRef.current = mergedD;
-        setDonations(mergedD);
-        saveStoredDonations(mergedD);
-      }
-
-      const res = await syncLocalRecordsToCloud(
-        firebaseUser,
-        patientsRef.current,
-        funeralsRef.current,
-        donationsRef.current,
-        deliverySettingsRef.current,
-        teamEmails
-      );
-
-      // Pull fresh authoritative server data so this device immediately matches all other devices
-      const serverSnapshot = await pullAllFromCloudServer(firebaseUser, {
+      // 1. Force pull fresh authoritative server snapshot FIRST
+      const initialServer = await pullAllFromCloudServer(firebaseUser, {
         patients: patientsRef.current,
         funerals: funeralsRef.current,
         donations: donationsRef.current,
       });
+
+      const pendingOps = getPendingOps();
+      const hasPendingOps =
+        pendingOps.upserts.patients.length > 0 ||
+        pendingOps.upserts.funerals.length > 0 ||
+        pendingOps.upserts.donations.length > 0 ||
+        pendingOps.upserts.deliverySettings ||
+        pendingOps.deletes.funerals.length > 0 ||
+        pendingOps.deletes.donations.length > 0;
+
+      let legacyRecoveryCount = 0;
+      let defaultDbAccessError = false;
+      let res = { uploaded: 0, deleted: 0, failed: 0 };
+
+      if (initialServer.patients.length === 0) {
+        // Cloud is empty: recover from local recovery or (default) DB if present
+        const pendingDeletes = pendingOps.deletes;
+        const recoveryPatients = getRecoveryPatients();
+        if (recoveryPatients.length > 0) {
+          const mergedLocal = sortPatientsByCodeAsc(
+            mergeRecordsNonDestructively(recoveryPatients, patientsRef.current)
+          );
+          patientsRef.current = mergedLocal;
+          setPatients(mergedLocal);
+          saveStoredPatients(mergedLocal);
+        }
+
+        const legacyRecovery = await recoverFromDefaultDatabase(firebaseUser, teamEmails);
+        legacyRecoveryCount = legacyRecovery.recoveredCount;
+        defaultDbAccessError = legacyRecovery.defaultDbAccessError;
+
+        if (legacyRecovery.recoveredPatients.length > 0) {
+          const mergedP = sortPatientsByCodeAsc(
+            mergeRecordsNonDestructively(legacyRecovery.recoveredPatients, patientsRef.current)
+          );
+          patientsRef.current = mergedP;
+          setPatients(mergedP);
+          saveStoredPatients(mergedP);
+        }
+        if (legacyRecovery.recoveredFunerals.length > 0) {
+          const mergedF = mergeRecordsNonDestructively(
+            legacyRecovery.recoveredFunerals,
+            funeralsRef.current,
+            new Set(pendingDeletes.funerals)
+          );
+          funeralsRef.current = mergedF;
+          setFunerals(mergedF);
+          saveStoredFunerals(mergedF);
+        }
+        if (legacyRecovery.recoveredDonations.length > 0) {
+          const mergedD = mergeRecordsNonDestructively(
+            legacyRecovery.recoveredDonations,
+            donationsRef.current,
+            new Set(pendingDeletes.donations)
+          );
+          donationsRef.current = mergedD;
+          setDonations(mergedD);
+          saveStoredDonations(mergedD);
+        }
+
+        res = await syncLocalRecordsToCloud(
+          firebaseUser,
+          patientsRef.current,
+          funeralsRef.current,
+          donationsRef.current,
+          deliverySettingsRef.current,
+          teamEmails
+        );
+      } else if (hasPendingOps) {
+        res = await syncLocalRecordsToCloud(
+          firebaseUser,
+          patientsRef.current,
+          funeralsRef.current,
+          donationsRef.current,
+          deliverySettingsRef.current,
+          teamEmails
+        );
+      }
+
+      // Pull fresh authoritative server data again if we uploaded anything, else use initialServer
+      const serverSnapshot =
+        initialServer.patients.length === 0 || res.uploaded > 0 || res.deleted > 0
+          ? await pullAllFromCloudServer(firebaseUser, {
+              patients: patientsRef.current,
+              funerals: funeralsRef.current,
+              donations: donationsRef.current,
+            })
+          : initialServer;
 
       const latestPending = getPendingOps();
       const latestKnown = getKnownSyncedIds();
@@ -866,13 +1019,14 @@ function AppContent() {
           patientsRef.current,
           new Set(latestPending.upserts.patients),
           new Set(),
-          new Set(),
+          new Set(latestKnown.patients),
+          true,
           true
         )
       );
       patientsRef.current = nextPatients;
       setPatients(nextPatients);
-      saveStoredPatients(nextPatients);
+      saveExactStoredPatients(nextPatients);
       replaceKnownSyncedIds('patients', serverSnapshot.patients.map((p) => p.id));
 
       const nextFunerals = reconcileWithCloudSnapshot(
@@ -881,11 +1035,12 @@ function AppContent() {
         new Set(latestPending.upserts.funerals),
         new Set(latestPending.deletes.funerals),
         new Set(latestKnown.funerals),
+        true,
         true
       );
       funeralsRef.current = nextFunerals;
       setFunerals(nextFunerals);
-      saveStoredFunerals(nextFunerals);
+      saveExactStoredFunerals(nextFunerals);
       replaceKnownSyncedIds('funerals', serverSnapshot.funerals.map((f) => f.id));
 
       const nextDonations = reconcileWithCloudSnapshot(
@@ -894,11 +1049,12 @@ function AppContent() {
         new Set(latestPending.upserts.donations),
         new Set(latestPending.deletes.donations),
         new Set(latestKnown.donations),
+        true,
         true
       );
       donationsRef.current = nextDonations;
       setDonations(nextDonations);
-      saveStoredDonations(nextDonations);
+      saveExactStoredDonations(nextDonations);
       replaceKnownSyncedIds('donations', serverSnapshot.donations.map((d) => d.id));
 
       if (serverSnapshot.deliverySettings && !latestPending.upserts.deliverySettings) {
@@ -917,7 +1073,7 @@ function AppContent() {
         finalNextPatients = sortPatientsByCodeAsc([...nextPatients, ...addedWithQr]);
         patientsRef.current = finalNextPatients;
         setPatients(finalNextPatients);
-        saveStoredPatients(finalNextPatients);
+        saveExactStoredPatients(finalNextPatients);
 
         const seedSync = await syncLocalRecordsToCloud(
           firebaseUser,
@@ -946,19 +1102,19 @@ function AppContent() {
         setCloudStatus('synced');
         setCloudErrorReason(null);
         const recoveredMsg =
-          legacyRecovery.recoveredCount > 0 ? `กู้คืน ${legacyRecovery.recoveredCount} รายการ • ` : '';
+          legacyRecoveryCount > 0 ? `กู้คืน ${legacyRecoveryCount} รายการ • ` : '';
         if (finalNextPatients.length === 0) {
           showToast(
-            legacyRecovery.defaultDbAccessError
-              ? 'ยังไม่พบข้อมูลผู้ป่วยในฐานข้อมูลหลักและติดสิทธิ์เข้าถึงฐานข้อมูล (default) กรุณาใช้ไฟล์สำรอง JSON หรือเปิดเครื่องที่เคยบันทึกไว้'
-              : 'ไม่พบข้อมูลผู้ป่วยใน Cloud Firestore และแคชในเครื่องนี้ กรุณากู้คืนจากไฟล์ Backup JSON หรือเปิดจากเครื่องที่เคยบันทึกไว้เพื่อซิงค์',
+            defaultDbAccessError
+              ? 'ยังไม่พบข้อมูลผู้ป่วยในฐานข้อมูลหลัก กรุณากด Import JSON/Excel เพื่อนำเข้าข้อมูล'
+              : 'ไม่พบข้อมูลผู้ป่วยใน Cloud Firestore กรุณากด Import JSON/Excel หรือบันทึกผู้ป่วยใหม่',
             'warning'
           );
         } else {
           showToast(
-            totalUploaded > 0 || res.deleted > 0 || legacyRecovery.recoveredCount > 0
+            totalUploaded > 0 || res.deleted > 0 || legacyRecoveryCount > 0
               ? `${recoveredMsg}ซิงค์ข้อมูลตรงกันทุกเครื่องแล้ว (ผู้ป่วย ${finalNextPatients.length} ราย)`
-              : `ดึงข้อมูลล่าสุดตรงกับ Cloud ทุกเครื่องแล้ว (ผู้ป่วย ${finalNextPatients.length} ราย)`,
+              : `ดึงข้อมูลล่าสุดจาก Cloud ทับข้อมูลในเครื่องตรงกันแล้ว (ผู้ป่วย ${finalNextPatients.length} ราย)`,
             'success'
           );
         }
@@ -1447,12 +1603,13 @@ function AppContent() {
     showToast('ลบรายการบริจาคเรียบร้อยแล้ว', 'info');
   };
 
-  // Import full JSON backup (non-destructive merge so existing data is never lost)
+  // Import full JSON / Excel / CSV backup (deduplicated merge + automatic upload to Cloud Database)
   const handleImportBackup = async (
     importedPatients: PatientRecord[],
     importedFunerals?: FuneralAssistanceRecord[],
     importedDonations?: DonationDistributionRecord[]
   ) => {
+    const nowIso = new Date().toISOString();
     let nextPatients = patientsRef.current;
     let nextFunerals = funeralsRef.current;
     let nextDonations = donationsRef.current;
@@ -1484,6 +1641,8 @@ function AppContent() {
           documents: p.documents && p.documents.length > 0 ? p.documents : matched?.documents || [],
           deliveries: p.deliveries && p.deliveries.length > 0 ? p.deliveries : matched?.deliveries || [],
           qrCodeDataUrl: p.qrCodeDataUrl || matched?.qrCodeDataUrl || '',
+          createdAt: matched?.createdAt || p.createdAt || nowIso,
+          updatedAt: nowIso,
         };
       });
 
@@ -1494,29 +1653,31 @@ function AppContent() {
       );
       setPatients(nextPatients);
       patientsRef.current = nextPatients;
-      saveStoredPatients(nextPatients);
+      saveExactStoredPatients(nextPatients);
     }
     if (importedFunerals && Array.isArray(importedFunerals)) {
       const sanitizedFunerals = importedFunerals.map((f) => ({
         ...f,
         id: sanitizeFirestoreId(f.id, 'funeral'),
+        updatedAt: nowIso,
       }));
       sanitizedFunerals.forEach((f) => markPendingUpsert('funerals', f.id));
       nextFunerals = mergeRecordsNonDestructively(sanitizedFunerals, funeralsRef.current);
       setFunerals(nextFunerals);
       funeralsRef.current = nextFunerals;
-      saveStoredFunerals(nextFunerals);
+      saveExactStoredFunerals(nextFunerals);
     }
     if (importedDonations && Array.isArray(importedDonations)) {
       const sanitizedDonations = importedDonations.map((d) => ({
         ...d,
         id: sanitizeFirestoreId(d.id, 'donation'),
+        updatedAt: nowIso,
       }));
       sanitizedDonations.forEach((d) => markPendingUpsert('donations', d.id));
       nextDonations = mergeRecordsNonDestructively(sanitizedDonations, donationsRef.current);
       setDonations(nextDonations);
       donationsRef.current = nextDonations;
-      saveStoredDonations(nextDonations);
+      saveExactStoredDonations(nextDonations);
     }
 
     setCurrentTab('list');
@@ -1535,16 +1696,25 @@ function AppContent() {
         if (res.failed > 0) {
           setCloudStatus('error');
           showToast(
-            `นำเข้าแล้ว แต่ซิงค์ขึ้น Cloud ไม่สำเร็จ ${res.failed} รายการ ระบบจะลองซิงค์ใหม่อัตโนมัติ`,
+            `นำเข้าแล้ว ${importedPatients.length} ราย แต่ซิงค์ขึ้น Cloud ไม่สำเร็จ ${res.failed} รายการ ระบบจะลองซิงค์ใหม่อัตโนมัติ`,
             'warning'
           );
         } else {
           setCloudStatus('synced');
-          showToast('นำเข้าและซิงค์ข้อมูลสำรองขึ้น Cloud สำเร็จแล้ว', 'success');
+          showToast(
+            `นำเข้าข้อมูลผู้ป่วย ${importedPatients.length} ราย และอัปโหลดขึ้น Cloud Database สำเร็จแล้ว`,
+            'success'
+          );
         }
       } catch {
         setCloudStatus('error');
+        showToast(
+          `นำเข้าข้อมูลในเครื่องแล้ว ${importedPatients.length} ราย (รอซิงค์ขึ้น Cloud อัตโนมัติ)`,
+          'warning'
+        );
       }
+    } else {
+      showToast(`นำเข้าข้อมูลในเครื่องสำเร็จ ${importedPatients.length} ราย`, 'success');
     }
   };
 
@@ -2032,6 +2202,8 @@ function AppContent() {
         {currentTab === 'list' && (
           <PatientList
             patients={patients}
+            funerals={funerals}
+            donations={donations}
             onEditPatient={handleStartEdit}
             onArchivePatient={handleArchivePatient}
             onAddNew={() => {

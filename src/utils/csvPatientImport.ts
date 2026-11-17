@@ -1,4 +1,12 @@
-import { DiaperSize, MobilityLevel, PatientRecord, PatientStatus } from '../types';
+import * as XLSX from 'xlsx';
+import {
+  DiaperSize,
+  DonationDistributionRecord,
+  FuneralAssistanceRecord,
+  MobilityLevel,
+  PatientRecord,
+  PatientStatus,
+} from '../types';
 import { calculateVulnerabilityAssessment, DimensionScores } from './assessment';
 import { formatNationalId, sortPatientsByCodeAsc } from './idCard';
 import { sanitizeFirestoreId } from './image';
@@ -174,8 +182,10 @@ function matchTargetVulnerabilityScore(
   return dims;
 }
 
-export function parsePatientsFromCsv(csvText: string): PatientRecord[] {
-  const rows = parseCsvRows(csvText);
+export function parsePatientsFromTableRows(rawRows: unknown[][]): PatientRecord[] {
+  const rows = rawRows
+    .map((r) => (Array.isArray(r) ? r.map((cell) => String(cell ?? '')) : []))
+    .filter((r) => r.some((c) => c.trim().length > 0));
   if (rows.length < 2) return [];
 
   const headerRow = rows[0].map((h) => h.trim());
@@ -390,6 +400,125 @@ export function parsePatientsFromCsv(csvText: string): PatientRecord[] {
   }
 
   return sortPatientsByCodeAsc(parsed);
+}
+
+export function parsePatientsFromCsv(csvText: string): PatientRecord[] {
+  return parsePatientsFromTableRows(parseCsvRows(csvText));
+}
+
+export function parsePatientsFromExcelBuffer(buffer: ArrayBuffer): PatientRecord[] {
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) return [];
+  const sheet = workbook.Sheets[firstSheetName];
+  if (!sheet) return [];
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' });
+  return parsePatientsFromTableRows(rows);
+}
+
+export interface ParsedBackupPayload {
+  patients: PatientRecord[];
+  funerals?: FuneralAssistanceRecord[];
+  donations?: DonationDistributionRecord[];
+  formatLabel: 'JSON สำรองระบบ' | 'JSON LocalStorage Backup' | 'ไฟล์ Excel (.xlsx/.xls)' | 'ไฟล์ CSV';
+}
+
+function tryParseJsonArray<T>(val: unknown): T[] | null {
+  if (Array.isArray(val)) return val as T[];
+  if (typeof val === 'string' && val.trim().startsWith('[')) {
+    try {
+      const inner = JSON.parse(val);
+      return Array.isArray(inner) ? (inner as T[]) : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export function parseBackupJsonText(jsonText: string): ParsedBackupPayload {
+  const parsed = JSON.parse(jsonText);
+
+  // 1. Standard BD-Care full backup object
+  if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.patients)) {
+    return {
+      patients: parsed.patients,
+      funerals: Array.isArray(parsed.funerals) ? parsed.funerals : undefined,
+      donations: Array.isArray(parsed.donations) ? parsed.donations : undefined,
+      formatLabel: 'JSON สำรองระบบ',
+    };
+  }
+
+  // 2. Direct array of PatientRecord
+  if (Array.isArray(parsed)) {
+    return {
+      patients: parsed,
+      formatLabel: 'JSON สำรองระบบ',
+    };
+  }
+
+  // 3. Raw localStorage dump JSON (e.g. `bd-care-backup.json` from browser console snippet)
+  if (parsed && typeof parsed === 'object') {
+    const mainPatients = tryParseJsonArray<PatientRecord>(parsed.bdcare_patients_v1);
+    const recoveryPatients = tryParseJsonArray<PatientRecord>(parsed.bdcare_patients_recovery_v1);
+    const patientsList =
+      mainPatients && mainPatients.length > 0
+        ? mainPatients
+        : recoveryPatients || mainPatients || [];
+
+    const mainFunerals = tryParseJsonArray<FuneralAssistanceRecord>(parsed.bdcare_funerals_v1);
+    const recoveryFunerals = tryParseJsonArray<FuneralAssistanceRecord>(parsed.bdcare_funerals_recovery_v1);
+    const funeralsList =
+      mainFunerals && mainFunerals.length > 0 ? mainFunerals : recoveryFunerals || mainFunerals || undefined;
+
+    const mainDonations = tryParseJsonArray<DonationDistributionRecord>(parsed.bdcare_donations_v1);
+    const recoveryDonations = tryParseJsonArray<DonationDistributionRecord>(
+      parsed.bdcare_donations_recovery_v1
+    );
+    const donationsList =
+      mainDonations && mainDonations.length > 0
+        ? mainDonations
+        : recoveryDonations || mainDonations || undefined;
+
+    const hasAnyKnownKey =
+      'bdcare_patients_v1' in parsed ||
+      'bdcare_patients_recovery_v1' in parsed ||
+      'bdcare_funerals_v1' in parsed ||
+      'bdcare_donations_v1' in parsed;
+
+    if (hasAnyKnownKey) {
+      return {
+        patients: patientsList,
+        funerals: funeralsList,
+        donations: donationsList,
+        formatLabel: 'JSON LocalStorage Backup',
+      };
+    }
+  }
+
+  throw new Error('INVALID_JSON_FORMAT');
+}
+
+export async function parseBackupOrExcelFile(file: File): Promise<ParsedBackupPayload> {
+  const nameLower = (file.name || '').toLowerCase();
+  if (nameLower.endsWith('.xlsx') || nameLower.endsWith('.xls')) {
+    const buffer = await file.arrayBuffer();
+    return {
+      patients: parsePatientsFromExcelBuffer(buffer),
+      formatLabel: 'ไฟล์ Excel (.xlsx/.xls)',
+    };
+  }
+
+  if (nameLower.endsWith('.csv')) {
+    const text = await file.text();
+    return {
+      patients: parsePatientsFromCsv(text),
+      formatLabel: 'ไฟล์ CSV',
+    };
+  }
+
+  const text = await file.text();
+  return parseBackupJsonText(text);
 }
 
 let cachedSeedPatients: PatientRecord[] | null = null;

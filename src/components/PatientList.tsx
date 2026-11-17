@@ -18,6 +18,8 @@ import {
   UserPlus,
   RefreshCw,
   Upload,
+  Download,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   PatientRecord,
@@ -41,7 +43,8 @@ import { PrintFormSK04 } from './PrintFormSK04';
 import { PrintHouseQrLabel } from './PrintHouseQrLabel';
 import { PrintRosterModal } from './PrintRosterModal';
 import { useUiFeedback } from './UiFeedback';
-import { parsePatientsFromCsv } from '../utils/csvPatientImport';
+import { parseBackupOrExcelFile } from '../utils/csvPatientImport';
+import { exportBackupJson, exportPatientsToExcel } from '../utils/storage';
 
 function formatRosterCode(code: string): string {
   return (code || '')
@@ -64,6 +67,8 @@ function stripAddrPrefix(val: string | undefined, prefixes: string[]): string {
 
 interface PatientListProps {
   patients: PatientRecord[];
+  funerals?: FuneralAssistanceRecord[];
+  donations?: DonationDistributionRecord[];
   onEditPatient: (patient: PatientRecord) => void;
   onArchivePatient: (patientId: string, newStatus: PatientStatus, reason: string) => void;
   onAddNew?: () => void;
@@ -78,6 +83,8 @@ interface PatientListProps {
 
 export const PatientList: React.FC<PatientListProps> = ({
   patients,
+  funerals = [],
+  donations = [],
   onEditPatient,
   onArchivePatient,
   onAddNew,
@@ -87,6 +94,7 @@ export const PatientList: React.FC<PatientListProps> = ({
 }) => {
   const { showToast } = useUiFeedback();
   const restoreFileRef = React.useRef<HTMLInputElement>(null);
+  const toolbarImportRef = React.useRef<HTMLInputElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDistrict, setSelectedDistrict] = useState<string>('all');
   const [selectedMobility, setSelectedMobility] = useState<string>('all');
@@ -135,6 +143,29 @@ export const PatientList: React.FC<PatientListProps> = ({
       return matchSearch && matchDistrict && matchMobility;
     })
   );
+
+  const handleImportFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !onImportBackup) return;
+    try {
+      const result = await parseBackupOrExcelFile(file);
+      const totalCount =
+        result.patients.length +
+        (result.funerals?.length || 0) +
+        (result.donations?.length || 0);
+      if (totalCount === 0) {
+        showToast('ไม่พบข้อมูลผู้ป่วยหรือรายการสำรองในไฟล์ที่เลือก', 'warning');
+        return;
+      }
+      onImportBackup(result.patients, result.funerals, result.donations);
+    } catch {
+      showToast(
+        'ไม่สามารถอ่านไฟล์ได้ กรุณาเลือกไฟล์ .json, .xlsx, .xls หรือ .csv ที่ถูกต้อง',
+        'error'
+      );
+    }
+  };
 
   const handleConfirmArchive = () => {
     if (!archiveTarget) return;
@@ -186,8 +217,8 @@ export const PatientList: React.FC<PatientListProps> = ({
             </button>
           </div>
 
-          {/* View Mode Switcher & A4 Print Button */}
-          <div className="flex items-center gap-2">
+          {/* View Mode Switcher, Backup Actions & A4 Print Button */}
+          <div className="flex flex-wrap items-center gap-1.5">
             <div className="hidden md:flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
               <button
                 onClick={() => setViewMode('table')}
@@ -214,6 +245,53 @@ export const PatientList: React.FC<PatientListProps> = ({
                 <span>การ์ด</span>
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                exportBackupJson(patients, funerals, donations);
+                showToast(`ดาวน์โหลดไฟล์สำรอง JSON (${patients.length} ราย) เรียบร้อยแล้ว`, 'success');
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-lg text-xs font-semibold transition cursor-pointer"
+              title="ดาวน์โหลดข้อมูลทั้งหมดเป็นไฟล์สำรอง JSON"
+            >
+              <Download className="w-3.5 h-3.5 text-blue-600" />
+              <span>Export JSON</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                exportPatientsToExcel(patients);
+                showToast(`ดาวน์โหลดไฟล์ Excel (${patients.length} ราย) เรียบร้อยแล้ว`, 'success');
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-semibold transition cursor-pointer"
+              title="ดาวน์โหลดรายชื่อผู้ป่วยทั้งหมดเป็นไฟล์ Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Export Excel</span>
+            </button>
+
+            {onImportBackup && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => toolbarImportRef.current?.click()}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-xs font-semibold transition cursor-pointer"
+                  title="นำเข้าข้อมูลจากไฟล์ JSON, Excel (.xlsx/.xls) หรือ CSV และอัปโหลดขึ้น Cloud อัตโนมัติ"
+                >
+                  <Upload className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Import JSON/Excel</span>
+                </button>
+                <input
+                  ref={toolbarImportRef}
+                  type="file"
+                  accept=".json,.xlsx,.xls,.csv"
+                  onChange={handleImportFileSelected}
+                  className="hidden"
+                />
+              </>
+            )}
 
             <button
               onClick={() => setIsPrintingRoster(true)}
@@ -664,45 +742,14 @@ export const PatientList: React.FC<PatientListProps> = ({
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  นำเข้า / กู้คืน (.json / .csv)
+                  นำเข้า JSON / Excel (.json / .xlsx / .csv)
                 </button>
                 <input
                   ref={restoreFileRef}
                   type="file"
-                  accept=".json,.csv"
+                  accept=".json,.xlsx,.xls,.csv"
                   className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const isCsv = file.name.toLowerCase().endsWith('.csv');
-                    const reader = new FileReader();
-                    reader.onload = (ev) => {
-                      try {
-                        const text = String(ev.target?.result || '');
-                        if (isCsv) {
-                          const csvPatients = parsePatientsFromCsv(text);
-                          if (csvPatients.length > 0) {
-                            onImportBackup(csvPatients);
-                          } else {
-                            showToast('ไม่พบข้อมูลผู้ป่วยในไฟล์ CSV ที่เลือก', 'warning');
-                          }
-                          return;
-                        }
-                        const parsed = JSON.parse(text);
-                        if (parsed && Array.isArray(parsed.patients)) {
-                          onImportBackup(parsed.patients, parsed.funerals, parsed.donations);
-                        } else if (Array.isArray(parsed)) {
-                          onImportBackup(parsed);
-                        } else {
-                          showToast('รูปแบบไฟล์ Backup JSON ไม่ถูกต้อง', 'error');
-                        }
-                      } catch {
-                        showToast('ไม่สามารถอ่านไฟล์ข้อมูลสำรองได้', 'error');
-                      }
-                    };
-                    reader.readAsText(file);
-                    e.target.value = '';
-                  }}
+                  onChange={handleImportFileSelected}
                 />
               </>
             )}

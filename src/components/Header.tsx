@@ -31,6 +31,7 @@ import {
 } from '../types';
 import {
   exportToCsv,
+  exportPatientsToExcel,
   exportBackupJson,
   exportFuneralsToCsv,
   exportDonationsToCsv,
@@ -38,7 +39,7 @@ import {
 import { LoginModal } from './LoginModal';
 import { useUiFeedback } from './UiFeedback';
 import { firebaseConfig } from '../firebase';
-import { parsePatientsFromCsv } from '../utils/csvPatientImport';
+import { parseBackupOrExcelFile } from '../utils/csvPatientImport';
 
 interface HeaderProps {
   currentTab: string;
@@ -142,44 +143,28 @@ export const Header: React.FC<HeaderProps> = ({
     ['deceased', 'moved', 'rejected'].includes(p.status)
   ).length;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
-    const isCsv = file.name.toLowerCase().endsWith('.csv');
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const text = String(event.target?.result || '');
-        if (isCsv) {
-          const csvPatients = parsePatientsFromCsv(text);
-          if (csvPatients.length > 0) {
-            onImportBackup(csvPatients);
-            showToast(`นำเข้าและผสานข้อมูลจาก CSV สำเร็จ ${csvPatients.length} ราย`, 'success');
-          } else {
-            showToast('ไม่พบข้อมูลผู้ป่วยในไฟล์ CSV ที่เลือก', 'warning');
-          }
-          return;
-        }
-        const parsed = JSON.parse(text);
-        if (parsed && Array.isArray(parsed.patients)) {
-          onImportBackup(parsed.patients, parsed.funerals, parsed.donations);
-          showToast(
-            `นำเข้าและผสานข้อมูลสำเร็จ: ผู้ป่วย ${parsed.patients.length} ราย, อนุเคราะห์เผาศพ ${parsed.funerals?.length || 0} ราย, บริจาคสิ่งของ ${parsed.donations?.length || 0} ราย`,
-            'success'
-          );
-        } else if (Array.isArray(parsed)) {
-          onImportBackup(parsed);
-          showToast(`นำเข้าและผสานข้อมูลสำเร็จ ${parsed.length} รายการ`, 'success');
-        } else {
-          showToast('รูปแบบไฟล์ JSON ไม่ถูกต้อง', 'error');
-        }
-      } catch {
-        showToast('เกิดข้อผิดพลาดในการอ่านไฟล์สำรองข้อมูล', 'error');
+    try {
+      const parsed = await parseBackupOrExcelFile(file);
+      const totalCount =
+        parsed.patients.length +
+        (parsed.funerals?.length || 0) +
+        (parsed.donations?.length || 0);
+      if (totalCount === 0) {
+        showToast('ไม่พบข้อมูลผู้ป่วยหรือข้อมูลสำรองในไฟล์ที่เลือก', 'warning');
+        return;
       }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
+      onImportBackup(parsed.patients, parsed.funerals, parsed.donations);
+    } catch {
+      showToast(
+        'ไม่สามารถอ่านไฟล์สำรองได้ รองรับ .json (มาตรฐาน/LocalStorage), .xlsx, .xls และ .csv',
+        'error'
+      );
+    }
   };
 
   return (
@@ -506,15 +491,30 @@ export const Header: React.FC<HeaderProps> = ({
 
                 <button
                   onClick={() => {
-                    exportToCsv(patients);
+                    exportPatientsToExcel(patients);
                     setIsBackupMenuOpen(false);
+                    showToast(`ส่งออกไฟล์ Excel (${patients.length} ราย) เรียบร้อยแล้ว`, 'success');
                   }}
                   className="w-full text-left px-3 py-2 text-xs hover:bg-emerald-50 hover:text-emerald-800 flex items-center gap-2 cursor-pointer"
                 >
                   <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
                   <div>
-                    <div className="font-semibold text-slate-800">ส่งออก Excel ทะเบียนผู้ป่วย (สค.04)</div>
-                    <div className="text-[10px] text-slate-500">รองรับ UTF-8 ตัวอักษรไม่เพี้ยน</div>
+                    <div className="font-semibold text-slate-800">ส่งออก Excel ทะเบียนผู้ป่วย (.xlsx)</div>
+                    <div className="text-[10px] text-slate-500">เปิดแก้ไขได้ทันทีใน Microsoft Excel</div>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    exportToCsv(patients);
+                    setIsBackupMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-emerald-50 hover:text-emerald-800 flex items-center gap-2 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-teal-600" />
+                  <div>
+                    <div className="font-semibold text-slate-800">ส่งออก CSV ทะเบียนผู้ป่วย (UTF-8)</div>
+                    <div className="text-[10px] text-slate-500">รองรับ UTF-8 ตัวอักษรไทยไม่เพี้ยน</div>
                   </div>
                 </button>
 
@@ -575,7 +575,8 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Upload className="w-4 h-4 text-amber-600" />
                   <div>
-                    <div className="font-semibold text-slate-800">นำเข้า / กู้คืนข้อมูล (.json / .csv)</div>
+                    <div className="font-semibold text-slate-800">นำเข้า / กู้คืน (.json / .xlsx / .csv)</div>
+                    <div className="text-[10px] text-slate-500">อัปโหลดขึ้น Cloud Database อัตโนมัติ</div>
                   </div>
                 </button>
 
@@ -602,7 +603,7 @@ export const Header: React.FC<HeaderProps> = ({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".json,.csv"
+              accept=".json,.xlsx,.xls,.csv"
               onChange={handleFileChange}
               className="hidden"
             />

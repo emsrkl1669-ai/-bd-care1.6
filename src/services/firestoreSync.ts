@@ -18,6 +18,7 @@ import {
   Query,
   QuerySnapshot,
   DocumentData,
+  DocumentReference,
 } from 'firebase/firestore';
 import {
   db,
@@ -56,6 +57,23 @@ import {
   setPendingDeliverySettings,
   saveStoredAuthorizedEmails,
 } from '../utils/storage';
+
+async function getExistingServerDocData(
+  ref: DocumentReference<DocumentData>
+): Promise<Record<string, any> | null> {
+  try {
+    const serverSnap = await getDocFromServer(ref);
+    return serverSnap.exists() ? serverSnap.data() : null;
+  } catch (err: any) {
+    const code = String(err?.code || '').toLowerCase();
+    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    if (code.includes('permission') || msg.includes('permission') || msg.includes('insufficient')) {
+      throw err;
+    }
+    const cachedSnap = await getDoc(ref);
+    return cachedSnap.exists() ? cachedSnap.data() : null;
+  }
+}
 
 function safeNum(val: unknown, fallback: number = 0): number {
   const n = Number(val);
@@ -252,7 +270,8 @@ export function reconcileWithCloudSnapshot<T extends { id: string; updatedAt?: s
   pendingUpsertIds: Set<string>,
   pendingDeleteIds: Set<string>,
   knownSyncedIds: Set<string>,
-  isAuthoritativeServerSnapshot: boolean
+  isAuthoritativeServerSnapshot: boolean,
+  mirrorCloudAuthoritatively: boolean = false
 ): T[] {
   const localMap = new Map<string, T>();
   for (const item of prevLocal) {
@@ -282,7 +301,7 @@ export function reconcileWithCloudSnapshot<T extends { id: string; updatedAt?: s
       resultMap.set(localItem.id, localItem);
       continue;
     }
-    if (!isAuthoritativeServerSnapshot || !knownSyncedIds.has(localItem.id)) {
+    if (!isAuthoritativeServerSnapshot || (!mirrorCloudAuthoritatively && !knownSyncedIds.has(localItem.id))) {
       resultMap.set(localItem.id, localItem);
     }
   }
@@ -750,16 +769,19 @@ export async function savePatientToCloud(
   const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
 
   try {
-    const existingSnap = await getDoc(patientRef);
-    const existingData = existingSnap.exists() ? existingSnap.data() : null;
+    const existingData = await getExistingServerDocData(patientRef);
     const ownerUid = existingData?.ownerUid || user.uid;
     const parentEmails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
+    const existingCreatedAt =
+      typeof existingData?.createdAt === 'string' && existingData.createdAt.trim()
+        ? existingData.createdAt
+        : patient.createdAt;
 
     const parentPayload = serializePatientParent(
       {
         ...patient,
         id: patientId,
-        createdAt: existingData?.createdAt ?? patient.createdAt,
+        createdAt: existingCreatedAt,
       },
       ownerUid,
       parentEmails,
@@ -840,17 +862,15 @@ export async function saveDeliveryToCloud(
 
   try {
     const patientRef = doc(db, 'patients', patientId);
-    const pSnap = await getDoc(patientRef);
-    if (!pSnap.exists()) {
+    const existingData = await getExistingServerDocData(patientRef);
+    if (!existingData) {
       await savePatientToCloud(patient, user, teamEmails);
       return;
     }
-    const existingData = pSnap.data();
 
     // Write subcollection delivery FIRST so remote onSnapshot fires after delivery doc exists
     const delRef = doc(db, 'patients', patientId, 'deliveries', delId);
-    const delSnap = await getDoc(delRef);
-    const delData = delSnap.exists() ? delSnap.data() : null;
+    const delData = await getExistingServerDocData(delRef);
     const delEmails = delData && !superAdmin ? delData.authorizedEmails : desiredEmails;
     const payload = await serializeDeliveryDoc(
       { ...delivery, id: delId },
@@ -864,11 +884,15 @@ export async function saveDeliveryToCloud(
 
     // Then update parent doc to trigger remote hydration with the committed delivery
     const parentEmails = !superAdmin ? existingData.authorizedEmails : desiredEmails;
+    const existingCreatedAt =
+      typeof existingData.createdAt === 'string' && existingData.createdAt.trim()
+        ? existingData.createdAt
+        : patient.createdAt;
     await setDoc(
       patientRef,
       serializePatientParent(
-        { ...patient, id: patientId, createdAt: existingData.createdAt ?? patient.createdAt },
-        existingData.ownerUid,
+        { ...patient, id: patientId, createdAt: existingCreatedAt },
+        existingData.ownerUid || user.uid,
         parentEmails,
         existingData.serverCreatedAt,
         true
@@ -891,16 +915,19 @@ export async function saveFuneralToCloud(
   const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
 
   try {
-    const snap = await getDoc(ref);
-    const existingData = snap.exists() ? snap.data() : null;
+    const existingData = await getExistingServerDocData(ref);
     const ownerUid = existingData?.ownerUid || user.uid;
     const parentEmails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
+    const existingCreatedAt =
+      typeof existingData?.createdAt === 'string' && existingData.createdAt.trim()
+        ? existingData.createdAt
+        : record.createdAt;
 
     const parentPayload = serializeFuneralParent(
       {
         ...record,
         id: funeralId,
-        createdAt: existingData?.createdAt ?? record.createdAt,
+        createdAt: existingCreatedAt,
       },
       ownerUid,
       parentEmails,
@@ -963,16 +990,19 @@ export async function saveDonationToCloud(
   const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
 
   try {
-    const snap = await getDoc(ref);
-    const existingData = snap.exists() ? snap.data() : null;
+    const existingData = await getExistingServerDocData(ref);
     const ownerUid = existingData?.ownerUid || user.uid;
     const parentEmails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
+    const existingCreatedAt =
+      typeof existingData?.createdAt === 'string' && existingData.createdAt.trim()
+        ? existingData.createdAt
+        : record.createdAt;
 
     const parentPayload = serializeDonationParent(
       {
         ...record,
         id: donationId,
-        createdAt: existingData?.createdAt ?? record.createdAt,
+        createdAt: existingCreatedAt,
       },
       ownerUid,
       parentEmails,
@@ -1038,8 +1068,7 @@ export async function saveDeliveryPlanSettingsToCloud(
   const desiredEmails = normalizeAuthorizedEmails(teamEmails, user);
 
   try {
-    const snap = await getDoc(ref);
-    const existingData = snap.exists() ? snap.data() : null;
+    const existingData = await getExistingServerDocData(ref);
     const ownerUid = existingData?.ownerUid || user.uid;
     const emails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
 
@@ -1054,7 +1083,7 @@ export async function saveDeliveryPlanSettingsToCloud(
           : safeNum(settings.customRiceCount, 0),
       currentMonth: (settings.currentMonth || '').slice(0, 100),
       updatedAt: (settings.updatedAt || new Date().toISOString()).slice(0, 64),
-      serverCreatedAt: existingData ? existingData.serverCreatedAt : serverTimestamp(),
+      serverCreatedAt: existingData?.serverCreatedAt || serverTimestamp(),
       serverUpdatedAt: serverTimestamp(),
     });
 

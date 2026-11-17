@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import {
   PatientRecord,
   FuneralAssistanceRecord,
@@ -84,6 +85,17 @@ export function saveStoredPatients(patients: PatientRecord[]): void {
   }
 }
 
+export function saveExactStoredPatients(patients: PatientRecord[]): void {
+  saveStoredPatients(patients);
+  if (patients.length === 0) {
+    try {
+      localStorage.removeItem(RECOVERY_PATIENTS_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 export function clearAllStoredPatients(includeRecovery: boolean = false): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
@@ -167,7 +179,7 @@ export function exportToCsv(patients: PatientRecord[]): void {
     p.currentAddress.province,
     p.latitude || '',
     p.longitude || '',
-    p.googleMapsUrl || '',
+    `"${(p.googleMapsUrl || '').replace(/"/g, '""')}"`,
     p.mobilityLevel === 'bedridden' ? 'ติดเตียง 100%' : p.mobilityLevel === 'semi_bedridden' ? 'กึ่งติดเตียง' : 'พอเดินได้',
     `"${(p.chronicDiseases || '').replace(/"/g, '""')}"`,
     `"${(p.symptomsDetail || '').replace(/"/g, '""')}"`,
@@ -200,6 +212,110 @@ export function exportToCsv(patients: PatientRecord[]): void {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// Export all patients to a native Excel (.xlsx) workbook
+export function exportPatientsToExcel(patients: PatientRecord[]): void {
+  const headers = [
+    'รหัสผู้ป่วย',
+    'สถานะ',
+    'วันที่รับเข้าโครงการ',
+    'เลขประจำตัวประชาชน',
+    'คำนำหน้า',
+    'ชื่อ-นามสกุล',
+    'อายุ (ปี)',
+    'เพศ',
+    'เบอร์โทรศัพท์',
+    'ผู้ดูแล/ผู้ประสานงาน',
+    'เบอร์โทรผู้ดูแล',
+    'ที่อยู่ปัจจุบัน (บ้านเลขที่)',
+    'หมู่บ้าน/อาคาร',
+    'ซอย',
+    'ถนน',
+    'ตำบล',
+    'อำเภอ',
+    'จังหวัด',
+    'พิกัด ละติจูด',
+    'พิกัด ลองจิจูด',
+    'ลิงก์ Google Maps',
+    'ระดับการเจ็บป่วย',
+    'โรคประจำตัว',
+    'อาการเจ็บป่วย',
+    'มีบัตรคนพิการ',
+    'ประเภทคนพิการ',
+    'รายได้สุทธิต่อเดือน (บาท)',
+    'เงินสดช่วยเหลือ (บาท/เดือน)',
+    'ขนาดผ้าอ้อม',
+    'จำนวนผ้าอ้อม (ห่อ/เดือน)',
+    'ข้าวสาร 5 กก. (ถุง/เดือน)',
+    'น้ำดื่ม 1.5L (แพ็ค/เดือน)',
+    'อุปกรณ์พิเศษอื่นๆ',
+    'คะแนนความเปราะบาง (0-100)',
+    'เจ้าหน้าที่สัมภาษณ์',
+    'ผู้พิจารณาอนุมัติ',
+    'ผู้อนุมัติโครงการ',
+  ];
+
+  const sortedPatients = sortPatientsByCodeAsc(patients);
+  const dataRows = sortedPatients.map((p) => [
+    p.code || '',
+    p.status || 'active',
+    p.admissionDate || '',
+    p.nationalId || '',
+    p.title || '',
+    p.fullName || '',
+    p.age ?? 0,
+    p.gender || '',
+    p.phone || '',
+    p.caregiverName || '',
+    p.caregiverPhone || '',
+    p.currentAddress?.houseNo || '',
+    p.currentAddress?.buildingVillage || '-',
+    p.currentAddress?.soi || '-',
+    p.currentAddress?.road || '-',
+    p.currentAddress?.subdistrict || '',
+    p.currentAddress?.district || '',
+    p.currentAddress?.province || '',
+    p.latitude ?? '',
+    p.longitude ?? '',
+    p.googleMapsUrl || '',
+    p.mobilityLevel === 'bedridden'
+      ? 'ติดเตียง 100%'
+      : p.mobilityLevel === 'semi_bedridden'
+      ? 'กึ่งติดเตียง'
+      : 'พอเดินได้',
+    p.chronicDiseases || '',
+    p.symptomsDetail || '',
+    p.disabilityCard?.hasCard ? 'มี' : 'ไม่มี',
+    p.disabilityCard?.type || '-',
+    p.netIncome ?? 0,
+    p.helpCashEnabled ? p.helpCashAmount ?? 0 : 0,
+    p.helpDiaperSize || 'NONE',
+    p.helpDiaperPacks ?? 0,
+    p.helpRicePacks ?? 0,
+    p.helpWaterPacks ?? 0,
+    p.helpOtherSupplies || '-',
+    p.vulnerabilityScore ?? 0,
+    p.interviewerName || '',
+    p.approverName || '',
+    p.presidentName || '',
+  ]);
+
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+  worksheet['!cols'] = headers.map((h, i) => {
+    if (i === 5 || i === 22 || i === 23) return { wch: 28 };
+    if (i === 20) return { wch: 42 };
+    if (i === 3 || i === 0) return { wch: 20 };
+    return { wch: Math.max(14, h.length + 4) };
+  });
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'ทะเบียนผู้ป่วย สค.04');
+  XLSX.writeFile(
+    workbook,
+    `BD-Care_ข้อมูลผู้ป่วยมูลนิธิร่วมกุศล_${new Date().toISOString().slice(0, 10)}.xlsx`
+  );
 }
 
 export function getStoredFunerals(): FuneralAssistanceRecord[] {
@@ -242,6 +358,17 @@ export function saveStoredFunerals(records: FuneralAssistanceRecord[]): void {
   saveToKey(FUNERAL_STORAGE_KEY);
   if (records.length > 0) {
     saveToKey(RECOVERY_FUNERALS_KEY);
+  }
+}
+
+export function saveExactStoredFunerals(records: FuneralAssistanceRecord[]): void {
+  saveStoredFunerals(records);
+  if (records.length === 0) {
+    try {
+      localStorage.removeItem(RECOVERY_FUNERALS_KEY);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -376,6 +503,17 @@ export function saveStoredDonations(donations: DonationDistributionRecord[]): vo
   saveToKey(DONATION_STORAGE_KEY);
   if (donations.length > 0) {
     saveToKey(RECOVERY_DONATIONS_KEY);
+  }
+}
+
+export function saveExactStoredDonations(donations: DonationDistributionRecord[]): void {
+  saveStoredDonations(donations);
+  if (donations.length === 0) {
+    try {
+      localStorage.removeItem(RECOVERY_DONATIONS_KEY);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
