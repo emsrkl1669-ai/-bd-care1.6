@@ -31,11 +31,21 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
     };
   }, []);
 
+  const computeFitScale = () => {
+    const sheetWidth = 794;
+    const sheetHeight = 1123;
+    const isMobile = window.innerWidth < 1024;
+    const horizPad = window.innerWidth < 640 ? 16 : 48;
+    const vertPad = window.innerWidth < 640 ? 180 : 155;
+    const fitW = (window.innerWidth - horizPad) / sheetWidth;
+    const fitH = (window.innerHeight - vertPad) / sheetHeight;
+    const fit = isMobile ? fitW : Math.min(fitW, fitH);
+    return parseFloat(Math.min(1, Math.max(0.28, fit)).toFixed(2));
+  };
+
   useEffect(() => {
     const updateFitScale = () => {
-      const availableHeight = window.innerHeight - 150;
-      const fit = Math.min(1, Math.max(0.4, availableHeight / 1150));
-      setScale(parseFloat(fit.toFixed(2)));
+      setScale(computeFitScale());
     };
 
     updateFitScale();
@@ -74,12 +84,12 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Zoom Controls */}
-            <div className="hidden sm:flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold">
               <button
                 type="button"
-                onClick={() => setScale(0.8)}
+                onClick={() => setScale(computeFitScale())}
                 className="px-2 py-1 bg-white hover:bg-slate-50 text-slate-700 rounded shadow-2xs border border-slate-200 transition cursor-pointer flex items-center gap-1"
               >
                 <Minimize2 className="w-3 h-3 text-blue-600" />
@@ -97,8 +107,8 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
               <div className="flex items-center border-l border-slate-200 pl-1">
                 <button
                   type="button"
-                  onClick={() => setScale((s) => Math.max(0.4, parseFloat((s - 0.1).toFixed(2))))}
-                  className="p-1 text-slate-600 hover:text-slate-900 rounded"
+                  onClick={() => setScale((s) => Math.max(0.28, parseFloat((s - 0.1).toFixed(2))))}
+                  className="p-1 text-slate-600 hover:text-slate-900 rounded cursor-pointer"
                 >
                   <ZoomOut className="w-3.5 h-3.5" />
                 </button>
@@ -106,7 +116,7 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
                 <button
                   type="button"
                   onClick={() => setScale((s) => Math.min(1.3, parseFloat((s + 0.1).toFixed(2))))}
-                  className="p-1 text-slate-600 hover:text-slate-900 rounded"
+                  className="p-1 text-slate-600 hover:text-slate-900 rounded cursor-pointer"
                 >
                   <ZoomIn className="w-3.5 h-3.5" />
                 </button>
@@ -131,14 +141,17 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
       </div>
 
       {/* A4 Container */}
-      <div
-        className="w-full flex flex-col items-center a4-container transition-all duration-150 origin-top pb-10"
-        style={{
-          transform: `scale(${scale})`,
-          transformOrigin: 'top center',
-          marginBottom: scale < 1 ? `-${Math.round((1 - scale) * 1150)}px` : undefined,
-        }}
-      >
+      <div className="w-full overflow-x-auto flex print:block print:overflow-visible">
+        <div
+          className="w-fit mx-auto flex flex-col items-center a4-container transition-all duration-150 origin-top pb-10"
+          style={{
+            transform: `scale(${scale})`,
+            transformOrigin: 'top center',
+            marginLeft: scale < 1 ? `-${Math.round(((1 - scale) * 794) / 2)}px` : undefined,
+            marginRight: scale < 1 ? `-${Math.round(((1 - scale) * 794) / 2)}px` : undefined,
+            marginBottom: scale < 1 ? `-${Math.round((1 - scale) * 1150)}px` : undefined,
+          }}
+        >
         {/* A4 Page: ใบคำร้องขอรับการอนุเคราะห์เผาศพ */}
         <div className="a4-sheet bg-white text-black shadow-2xl rounded-xs p-6 sm:py-[11mm] sm:px-[13mm] border border-slate-300 relative font-['Sarabun',sans-serif] flex flex-col justify-between">
           <div>
@@ -368,6 +381,7 @@ export const PrintFuneralForm: React.FC<PrintFuneralFormProps> = ({ record, onCl
               มูลนิธิร่วมกุศลสมุทรปราการ (北欖天德善堂) • โครงการสงเคราะห์ฌาปนกิจผู้ยากไร้และช่วยอนุเคราะห์เผาศพ
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>,

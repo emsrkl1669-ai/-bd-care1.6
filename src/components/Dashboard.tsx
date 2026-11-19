@@ -65,7 +65,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ patients }) => {
   // District distribution
   const districtCounts: Record<string, number> = {};
   SAMUT_PRAKAN_DISTRICTS.forEach((d) => {
-    districtCounts[d] = activePatients.filter((p) => p.currentAddress.district === d).length;
+    districtCounts[d] = activePatients.filter((p) => p.currentAddress?.district === d).length;
   });
 
   // Average vulnerability
@@ -74,31 +74,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ patients }) => {
     : 0;
 
   return (
-    <div className="max-w-7xl mx-auto py-3 px-3 sm:px-4 space-y-3.5">
+    <div className="w-full py-3 px-2.5 sm:px-4 lg:px-6 space-y-3.5">
       {/* Title */}
-      <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-xs flex items-center justify-between">
+      <div className="bg-white rounded-xl border border-slate-200 p-3 sm:p-3.5 shadow-xs flex items-center justify-between">
         <div>
-          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-blue-600" />
-            แดชบอร์ดสรุปสถิติโครงการใจถึงใจ มูลนิธิร่วมกุศลสมุทรปราการ
+          <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-blue-600 shrink-0" />
+            <span>แดชบอร์ดสรุปสถิติโครงการใจถึงใจ มูลนิธิร่วมกุศลสมุทรปราการ</span>
           </h2>
-          <p className="text-[11px] text-slate-500">
+          <p className="text-[11px] text-slate-500 mt-0.5">
             ภาพรวมการดูแลผู้ป่วยติดเตียงและยากไร้ ยอดจัดสรรงบประมาณ และสิ่งของช่วยเหลือ
           </p>
         </div>
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
         {/* Total Active Patients */}
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500">ในโครงการ (Active)</span>
-            <span className="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
+        <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200 shadow-xs">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[11px] sm:text-xs font-bold text-slate-500">ในโครงการ (Active)</span>
+            <span className="p-1.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
               <Users className="w-4 h-4" />
             </span>
           </div>
-          <div className="text-2xl font-black text-slate-900 mt-1">
+          <div className="text-xl sm:text-2xl font-black text-slate-900 mt-1 tabular-nums">
             {activePatients.length} <span className="text-xs font-normal text-slate-500">คน</span>
           </div>
           <div className="text-[11px] text-amber-600 font-medium">
@@ -107,14 +107,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ patients }) => {
         </div>
 
         {/* Monthly Cash Grant */}
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500">งบเงินสดช่วยเหลือ/เดือน</span>
-            <span className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg">
+        <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200 shadow-xs">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[11px] sm:text-xs font-bold text-slate-500">งบเงินสดช่วยเหลือ/เดือน</span>
+            <span className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg shrink-0">
               <DollarSign className="w-4 h-4" />
             </span>
           </div>
-          <div className="text-2xl font-black text-emerald-600 mt-1">
+          <div className="text-lg sm:text-2xl font-black text-emerald-600 mt-1 tabular-nums">
             {formatCurrency(monthlyTotalCash)} <span className="text-xs font-normal text-slate-500">บ./ด.</span>
           </div>
           <div className="text-[11px] text-slate-400">
@@ -123,14 +123,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ patients }) => {
         </div>
 
         {/* Diapers Monthly Requirement */}
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500">ผ้าอ้อมผู้ใหญ่/เดือน</span>
-            <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+        <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200 shadow-xs">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[11px] sm:text-xs font-bold text-slate-500">ผ้าอ้อมผู้ใหญ่/เดือน</span>
+            <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
               <Package className="w-4 h-4" />
             </span>
           </div>
-          <div className="text-2xl font-black text-indigo-600 mt-1">
+          <div className="text-xl sm:text-2xl font-black text-indigo-600 mt-1 tabular-nums">
             {totalDiaperPacks} <span className="text-xs font-normal text-slate-500">ห่อ/ด.</span>
           </div>
           <div className="text-[11px] text-slate-400">
@@ -139,14 +139,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ patients }) => {
         </div>
 
         {/* Vulnerability Index */}
-        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500">ดัชนีเปราะบางเฉลี่ย</span>
-            <span className="p-1.5 bg-red-50 text-red-600 rounded-lg">
+        <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200 shadow-xs">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[11px] sm:text-xs font-bold text-slate-500">ดัชนีเปราะบางเฉลี่ย</span>
+            <span className="p-1.5 bg-red-50 text-red-600 rounded-lg shrink-0">
               <ShieldAlert className="w-4 h-4" />
             </span>
           </div>
-          <div className="text-2xl font-black text-red-600 mt-1">
+          <div className="text-xl sm:text-2xl font-black text-red-600 mt-1 tabular-nums">
             {avgVulnerability} <span className="text-xs font-normal text-slate-500">/100</span>
           </div>
           <div className="text-[11px] text-red-700 font-semibold">
@@ -156,7 +156,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ patients }) => {
       </div>
 
       {/* Grid: Mobility Breakdown & Diaper Stock Requirement */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
         {/* Mobility Level */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
           <h3 className="font-bold text-slate-900 text-sm mb-4 flex items-center gap-2">
@@ -220,11 +220,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ patients }) => {
             <Package className="w-4 h-4 text-indigo-600" />
             ยอดสต็อกผ้าอ้อมที่ต้องเตรียม (แยกตามขนาด)
           </h3>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
             {(['S', 'M', 'L', 'XL', 'XXL'] as DiaperSize[]).map((size) => (
               <div key={size} className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-center">
                 <div className="text-xs font-bold text-slate-600">ไซส์ {size}</div>
-                <div className="text-2xl font-black text-indigo-700 mt-1">
+                <div className="text-xl sm:text-2xl font-black text-indigo-700 mt-1 tabular-nums">
                   {diaperCounts[size]}
                 </div>
                 <div className="text-[10px] text-slate-400">ห่อ/เดือน</div>

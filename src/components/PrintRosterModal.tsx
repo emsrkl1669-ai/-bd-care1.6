@@ -81,12 +81,15 @@ export function PrintRosterModal<T>({
   }, [isLandscape]);
 
   const computeFitScale = (mode: 'portrait' | 'landscape') => {
-    if (mode === 'landscape') {
-      const availW = window.innerWidth - 48;
-      return parseFloat(Math.min(1, Math.max(0.45, availW / 1145)).toFixed(2));
-    }
-    const availH = window.innerHeight - 150;
-    return parseFloat(Math.min(1, Math.max(0.4, availH / 1150)).toFixed(2));
+    const sheetWidth = mode === 'landscape' ? 1123 : 794;
+    const sheetHeight = mode === 'landscape' ? 794 : 1123;
+    const isMobile = window.innerWidth < 1024;
+    const horizPad = window.innerWidth < 640 ? 16 : 48;
+    const vertPad = window.innerWidth < 640 ? 190 : 165;
+    const fitW = (window.innerWidth - horizPad) / sheetWidth;
+    const fitH = (window.innerHeight - vertPad) / sheetHeight;
+    const fit = isMobile ? fitW : Math.min(fitW, fitH);
+    return parseFloat(Math.min(1, Math.max(0.28, fit)).toFixed(2));
   };
 
   useEffect(() => {
@@ -234,10 +237,10 @@ export function PrintRosterModal<T>({
             </div>
 
             {/* Zoom Controls */}
-            <div className="hidden sm:flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
               <button
                 type="button"
-                onClick={() => setScale((s) => Math.max(0.4, parseFloat((s - 0.05).toFixed(2))))}
+                onClick={() => setScale((s) => Math.max(0.28, parseFloat((s - 0.05).toFixed(2))))}
                 className="p-1 hover:bg-white rounded text-slate-600 hover:text-slate-900 transition cursor-pointer"
                 title="ย่อ"
               >
@@ -285,7 +288,7 @@ export function PrintRosterModal<T>({
 
         {/* Page Switcher Tabs (Portrait manual pagination only) */}
         {!isLandscape && totalPages > 1 && (
-          <div className="flex items-center gap-1.5 pt-2.5 overflow-x-auto text-xs">
+          <div className="flex items-center gap-1.5 pt-2.5 overflow-x-auto no-scrollbar text-xs">
             <span className="text-slate-500 font-medium shrink-0 mr-1">เลือกดูหน้า:</span>
             <button
               onClick={() => setActiveTab('all')}
@@ -315,17 +318,26 @@ export function PrintRosterModal<T>({
       </div>
 
       {/* Printable A4 Container */}
-      <div
-        className="a4-container transition-transform duration-150 origin-top flex flex-col items-center gap-6 pb-10"
-        style={{
-          transform: `scale(${scale})`,
-          transformOrigin: 'top center',
-          marginBottom:
-            !isLandscape && scale < 1
-              ? `-${Math.round((1 - scale) * (totalPages * 1140))}px`
-              : undefined,
-        }}
-      >
+      <div className="w-full overflow-x-auto flex print:block print:overflow-visible">
+        <div
+          className="a4-container w-fit mx-auto transition-transform duration-150 origin-top flex flex-col items-center gap-6 pb-10"
+          style={{
+            transform: `scale(${scale})`,
+            transformOrigin: 'top center',
+            marginLeft:
+              scale < 1
+                ? `-${Math.round(((1 - scale) * (isLandscape ? 1123 : 794)) / 2)}px`
+                : undefined,
+            marginRight:
+              scale < 1
+                ? `-${Math.round(((1 - scale) * (isLandscape ? 1123 : 794)) / 2)}px`
+                : undefined,
+            marginBottom:
+              !isLandscape && scale < 1
+                ? `-${Math.round((1 - scale) * ((activeTab === 'all' ? totalPages : 1) * 1140))}px`
+                : undefined,
+          }}
+        >
         {pages.map((pageItems, pageIdx) => {
           const isHiddenOnScreen = !isLandscape && activeTab !== 'all' && activeTab !== pageIdx;
           const isLastPage = pageIdx === totalPages - 1;
@@ -515,6 +527,7 @@ export function PrintRosterModal<T>({
             </div>
           );
         })}
+        </div>
       </div>
     </div>,
     document.body

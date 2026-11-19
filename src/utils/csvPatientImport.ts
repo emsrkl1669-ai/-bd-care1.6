@@ -10,6 +10,11 @@ import {
 import { calculateVulnerabilityAssessment, DimensionScores } from './assessment';
 import { formatNationalId, sortPatientsByCodeAsc } from './idCard';
 import { sanitizeFirestoreId } from './image';
+import {
+  normalizeDonationRecord,
+  normalizeFuneralRecord,
+  normalizePatientRecord,
+} from './normalizers';
 import { generateQrCodeDataUrl, makeGoogleMapsUrl } from './qrcode';
 
 export const SEEDED_PATIENT_CSV = `รหัสผู้ป่วย,สถานะ,วันที่รับเข้าโครงการ,เลขประจำตัวประชาชน,คำนำหน้า,ชื่อ-นามสกุล,อายุ (ปี),เพศ,เบอร์โทรศัพท์,ผู้ดูแล/ผู้ประสานงาน,เบอร์โทรผู้ดูแล,ที่อยู่ปัจจุบัน (บ้านเลขที่),หมู่บ้าน/อาคาร,ซอย,ถนน,ตำบล,อำเภอ,จังหวัด,พิกัด ละติจูด,พิกัด ลองจิจูด,ลิงก์ Google Maps,ระดับการเจ็บป่วย,โรคประจำตัว,อาการเจ็บป่วย,มีบัตรคนพิการ,ประเภทคนพิการ,รายได้สุทธิต่อเดือน (บาท),เงินสดช่วยเหลือ (บาท/เดือน),ขนาดผ้าอ้อม,จำนวนผ้าอ้อม (ห่อ/เดือน),ข้าวสาร 5 กก. (ถุง/เดือน),น้ำดื่ม 1.5L (แพ็ค/เดือน),อุปกรณ์พิเศษอื่นๆ,คะแนนความเปราะบาง (0-100),เจ้าหน้าที่สัมภาษณ์,ผู้พิจารณาอนุมัติ,ผู้อนุมัติโครงการ
@@ -436,61 +441,85 @@ function tryParseJsonArray<T>(val: unknown): T[] | null {
   return null;
 }
 
+function normalizePatientList(list: unknown[]): PatientRecord[] {
+  return sortPatientsByCodeAsc(
+    list
+      .filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+      .map((item) => normalizePatientRecord(item))
+  );
+}
+
+function normalizeFuneralList(list: unknown[] | null | undefined): FuneralAssistanceRecord[] | undefined {
+  if (!Array.isArray(list)) return undefined;
+  return list
+    .filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+    .map((item) => normalizeFuneralRecord(item));
+}
+
+function normalizeDonationList(list: unknown[] | null | undefined): DonationDistributionRecord[] | undefined {
+  if (!Array.isArray(list)) return undefined;
+  return list
+    .filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+    .map((item) => normalizeDonationRecord(item));
+}
+
 export function parseBackupJsonText(jsonText: string): ParsedBackupPayload {
   const parsed = JSON.parse(jsonText);
 
   // 1. Standard BD-Care full backup object
   if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.patients)) {
     return {
-      patients: parsed.patients,
-      funerals: Array.isArray(parsed.funerals) ? parsed.funerals : undefined,
-      donations: Array.isArray(parsed.donations) ? parsed.donations : undefined,
+      patients: normalizePatientList(parsed.patients),
+      funerals: normalizeFuneralList(parsed.funerals),
+      donations: normalizeDonationList(parsed.donations),
       formatLabel: 'JSON สำรองระบบ',
     };
   }
 
-  // 2. Direct array of PatientRecord
+  // 2. Direct array of PatientRecord (or legacy JSON export)
   if (Array.isArray(parsed)) {
     return {
-      patients: parsed,
+      patients: normalizePatientList(parsed),
       formatLabel: 'JSON สำรองระบบ',
     };
   }
 
   // 3. Raw localStorage dump JSON (e.g. `bd-care-backup.json` from browser console snippet)
   if (parsed && typeof parsed === 'object') {
-    const mainPatients = tryParseJsonArray<PatientRecord>(parsed.bdcare_patients_v1);
-    const recoveryPatients = tryParseJsonArray<PatientRecord>(parsed.bdcare_patients_recovery_v1);
-    const patientsList =
+    const mainPatients = tryParseJsonArray<Record<string, any>>(parsed.bdcare_patients_v1);
+    const recoveryPatients = tryParseJsonArray<Record<string, any>>(parsed.bdcare_patients_recovery_v1);
+    const patientsRaw =
       mainPatients && mainPatients.length > 0
         ? mainPatients
         : recoveryPatients || mainPatients || [];
 
-    const mainFunerals = tryParseJsonArray<FuneralAssistanceRecord>(parsed.bdcare_funerals_v1);
-    const recoveryFunerals = tryParseJsonArray<FuneralAssistanceRecord>(parsed.bdcare_funerals_recovery_v1);
-    const funeralsList =
-      mainFunerals && mainFunerals.length > 0 ? mainFunerals : recoveryFunerals || mainFunerals || undefined;
+    const mainFunerals = tryParseJsonArray<Record<string, any>>(parsed.bdcare_funerals_v1);
+    const recoveryFunerals = tryParseJsonArray<Record<string, any>>(parsed.bdcare_funerals_recovery_v1);
+    const funeralsRaw =
+      mainFunerals && mainFunerals.length > 0 ? mainFunerals : recoveryFunerals || mainFunerals;
 
-    const mainDonations = tryParseJsonArray<DonationDistributionRecord>(parsed.bdcare_donations_v1);
-    const recoveryDonations = tryParseJsonArray<DonationDistributionRecord>(
+    const mainDonations = tryParseJsonArray<Record<string, any>>(parsed.bdcare_donations_v1);
+    const recoveryDonations = tryParseJsonArray<Record<string, any>>(
       parsed.bdcare_donations_recovery_v1
     );
-    const donationsList =
+    const donationsRaw =
       mainDonations && mainDonations.length > 0
         ? mainDonations
-        : recoveryDonations || mainDonations || undefined;
+        : recoveryDonations || mainDonations;
 
     const hasAnyKnownKey =
       'bdcare_patients_v1' in parsed ||
       'bdcare_patients_recovery_v1' in parsed ||
       'bdcare_funerals_v1' in parsed ||
-      'bdcare_donations_v1' in parsed;
+      'bdcare_funerals_recovery_v1' in parsed ||
+      'bdcare_donations_v1' in parsed ||
+      'bdcare_donations_recovery_v1' in parsed;
 
     if (hasAnyKnownKey) {
       return {
-        patients: patientsList,
-        funerals: funeralsList,
-        donations: donationsList,
+        patients: normalizePatientList(patientsRaw),
+        funerals: normalizeFuneralList(funeralsRaw),
+        donations: normalizeDonationList(donationsRaw),
         formatLabel: 'JSON LocalStorage Backup',
       };
     }

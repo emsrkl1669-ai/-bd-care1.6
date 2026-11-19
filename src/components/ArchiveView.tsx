@@ -64,15 +64,15 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
   );
 
   return (
-    <div className="max-w-7xl mx-auto py-6 px-4 space-y-6">
+    <div className="w-full py-3 sm:py-5 px-2.5 sm:px-4 lg:px-6 space-y-4 sm:space-y-6">
       {/* Top Banner */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs flex flex-wrap items-center justify-between gap-3 sm:gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="p-2 bg-slate-100 text-slate-800 rounded-xl">
+            <span className="p-2 bg-slate-100 text-slate-800 rounded-xl shrink-0">
               <Archive className="w-5 h-5" />
             </span>
-            <h2 className="text-xl font-bold text-slate-900">
+            <h2 className="text-base sm:text-xl font-bold text-slate-900">
               🗄️ คลังประวัติผู้ป่วย (Patient History Archive)
             </h2>
           </div>
@@ -82,11 +82,11 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
         </div>
 
         {/* Status Category Pills & Print Button */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+        <div className="flex flex-wrap items-center gap-2 max-w-full">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold overflow-x-auto no-scrollbar max-w-full">
             <button
               onClick={() => setFilterType('all')}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
                 filterType === 'all' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -94,7 +94,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
             </button>
             <button
               onClick={() => setFilterType('deceased')}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
                 filterType === 'deceased' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -102,7 +102,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
             </button>
             <button
               onClick={() => setFilterType('moved')}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
                 filterType === 'moved' ? 'bg-blue-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -110,7 +110,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
             </button>
             <button
               onClick={() => setFilterType('rejected')}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap ${
                 filterType === 'rejected' ? 'bg-red-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -173,7 +173,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
                 </h3>
 
                 <p className="text-xs text-slate-500 font-mono">
-                  เลข ปชช.: {formatNationalId(patient.nationalId)} • ที่อยู่: ต.{patient.currentAddress.subdistrict} อ.{patient.currentAddress.district}
+                  เลข ปชช.: {formatNationalId(patient.nationalId)} • ที่อยู่: ต.{patient.currentAddress?.subdistrict || '-'} อ.{patient.currentAddress?.district || '-'}
                 </p>
 
                 {/* Stored Reason Log */}
@@ -299,7 +299,7 @@ export const ArchiveView: React.FC<ArchiveViewProps> = ({
               width: 'w-40',
               render: (p) => (
                 <div className="text-[9.5px] text-slate-600 leading-tight">
-                  ต.{p.currentAddress.subdistrict} อ.{p.currentAddress.district}
+                  ต.{p.currentAddress?.subdistrict || '-'} อ.{p.currentAddress?.district || '-'}
                 </div>
               ),
             },

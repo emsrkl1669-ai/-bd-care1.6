@@ -26,12 +26,16 @@ service cloud.firestore {
         request.auth.token.email.size() > 0;
     }
 
-    function isSuperAdmin() {
-      return isSignedIn() && request.auth.token.email.lower() == 'kitphiphat03@bdcare.foundation';
+    function hasSuperAdminEmail() {
+      return request.auth.token.email.lower() == 'kitphiphat03@bdcare.foundation';
     }
 
-    function isBuiltInStaffEmail() {
-      return isSignedIn() && request.auth.token.email.lower() in [
+    function isSuperAdmin() {
+      return isSignedIn() && hasSuperAdminEmail();
+    }
+
+    function hasBuiltInStaffEmail() {
+      return request.auth.token.email.lower() in [
         'kitphiphat03@bdcare.foundation',
         'aleena@bdcare.foundation',
         'muanruethai@bdcare.foundation',
@@ -40,10 +44,13 @@ service cloud.firestore {
       ];
     }
 
+    function isBuiltInStaffEmail() {
+      return isSignedIn() && hasBuiltInStaffEmail();
+    }
+
     function isStaffAdmin() {
       return isSignedIn() && (
-        isSuperAdmin() ||
-        isBuiltInStaffEmail() ||
+        hasBuiltInStaffEmail() ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -243,7 +250,7 @@ service cloud.firestore {
           (
             (!('id' in existing()) || incoming().id == existing().id) &&
             (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
-            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null || !(existing().serverCreatedAt is timestamp) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'ricePricePerBag', 'customRiceCount', 'currentMonth', 'updatedAt', 'serverUpdatedAt'
@@ -255,147 +262,112 @@ service cloud.firestore {
 
     // 5. Patient Records (แบบ สค.04)
     function isValidPatientRecord(data, patientId) {
-      return data.keys().hasAll([
+      let keys = data.keys().toSet();
+      return keys.hasAll([
           'id', 'ownerUid', 'code', 'status', 'fullName',
           'mobilityLevel', 'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'id', 'ownerUid', 'authorizedEmails', 'code', 'admissionDate', 'status', 'statusReason', 'statusHistory',
-          'nationalId', 'title', 'fullName', 'birthDate', 'age', 'gender',
-          'phone', 'caregiverName', 'caregiverRelation', 'caregiverPhone',
-          'idAddress', 'isSameAddress', 'currentAddress',
-          'latitude', 'longitude', 'locationAccuracy', 'landmarkNote', 'googleMapsUrl', 'qrCodeDataUrl',
-          'mobilityLevel', 'chronicDiseases', 'symptomsDetail', 'disabilityCard', 'specialNeeds',
-          'familyMembersTotal', 'familyMembersMale', 'familyMembersFemale',
-          'incomeSalary', 'incomeDisability', 'incomeElderly', 'incomeStateWelfare', 'incomeOther',
-          'expenseRentHouse', 'expenseRentLand', 'expenseLiving', 'expenseMedicalTravel', 'expenseDebt', 'expenseOther',
-          'monthlyExpense', 'netIncome', 'economicNote',
-          'helpCashEnabled', 'helpCashAmount', 'helpDiaperSize', 'helpDiaperPacks',
-          'helpRicePacks', 'helpWaterSize', 'helpWaterPacks', 'helpOtherSupplies',
-          'vulnerabilityScore', 'vulnerabilityLevel', 'dimensionScores',
-          'socialWorkerOpinion', 'aiSuggestions',
-          'interviewerName', 'interviewerPosition', 'approverName', 'approverPosition', 'presidentName', 'presidentPosition',
+        ].toSet()) &&
+        keys.hasOnly([
+          'id', 'ownerUid', 'authorizedEmails', 'code', 'status', 'fullName', 'mobilityLevel',
+          'profile', 'location', 'medical', 'householdEconomy', 'assistancePlan', 'assessment',
           'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
+        ].toSet()) &&
         isValidId(data.id) &&
         data.id == patientId &&
         isValidId(data.ownerUid) &&
         isValidEmailList(data) &&
-        isStr(data.code, 40) && data.code.size() >= 1 &&
+        data.code is string && data.code.size() >= 1 && data.code.size() <= 40 &&
         data.status in ['active', 'pending', 'deceased', 'moved', 'rejected'] &&
-        isOptStr(data, 'admissionDate', 32) &&
-        isOptStr(data, 'statusReason', 1000) &&
-        (!( 'statusHistory' in data ) || (data.statusHistory is list && data.statusHistory.size() <= 50 && (data.statusHistory.size() == 0 || data.statusHistory[0] is map))) &&
-        isOptStr(data, 'nationalId', 30) &&
-        isOptStr(data, 'title', 30) &&
-        isStr(data.fullName, 200) && data.fullName.size() >= 1 &&
-        isOptStr(data, 'birthDate', 32) &&
-        isOptNum(data, 'age') &&
-        (!( 'gender' in data ) || data.gender in ['ชาย', 'หญิง']) &&
-        isOptStr(data, 'phone', 50) &&
-        isOptStr(data, 'caregiverName', 200) &&
-        isOptStr(data, 'caregiverRelation', 100) &&
-        isOptStr(data, 'caregiverPhone', 50) &&
-        (!( 'idAddress' in data ) || data.idAddress is map) &&
-        isOptBool(data, 'isSameAddress') &&
-        (!( 'currentAddress' in data ) || data.currentAddress is map) &&
-        (!( 'latitude' in data ) || data.latitude == null || data.latitude is int || data.latitude is float) &&
-        (!( 'longitude' in data ) || data.longitude == null || data.longitude is int || data.longitude is float) &&
-        isOptNum(data, 'locationAccuracy') &&
-        isOptStr(data, 'landmarkNote', 1000) &&
-        isOptStr(data, 'googleMapsUrl', 500) &&
-        isOptStr(data, 'qrCodeDataUrl', 40000) &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 200 &&
         data.mobilityLevel in ['bedridden', 'semi_bedridden', 'can_walk'] &&
-        isOptStr(data, 'chronicDiseases', 1000) &&
-        isOptStr(data, 'symptomsDetail', 2000) &&
-        (!( 'disabilityCard' in data ) || data.disabilityCard is map) &&
-        (!( 'specialNeeds' in data ) || (data.specialNeeds is list && data.specialNeeds.size() <= 20 && (data.specialNeeds.size() == 0 || data.specialNeeds[0] is string))) &&
-        isOptNum(data, 'familyMembersTotal') &&
-        isOptNum(data, 'familyMembersMale') &&
-        isOptNum(data, 'familyMembersFemale') &&
-        isOptNum(data, 'incomeSalary') &&
-        isOptNum(data, 'incomeDisability') &&
-        isOptNum(data, 'incomeElderly') &&
-        isOptNum(data, 'incomeStateWelfare') &&
-        isOptNum(data, 'incomeOther') &&
-        isOptNum(data, 'expenseRentHouse') &&
-        isOptNum(data, 'expenseRentLand') &&
-        isOptNum(data, 'expenseLiving') &&
-        isOptNum(data, 'expenseMedicalTravel') &&
-        isOptNum(data, 'expenseDebt') &&
-        isOptNum(data, 'expenseOther') &&
-        isOptNum(data, 'monthlyExpense') &&
-        isOptNum(data, 'netIncome') &&
-        isOptStr(data, 'economicNote', 1000) &&
-        isOptBool(data, 'helpCashEnabled') &&
-        isOptNum(data, 'helpCashAmount') &&
-        (!( 'helpDiaperSize' in data ) || data.helpDiaperSize in ['S', 'M', 'L', 'XL', 'XXL', 'NONE']) &&
-        isOptNum(data, 'helpDiaperPacks') &&
-        isOptNum(data, 'helpRicePacks') &&
-        (!( 'helpWaterSize' in data ) || data.helpWaterSize in ['1.5L', '600ML', 'NONE']) &&
-        isOptNum(data, 'helpWaterPacks') &&
-        isOptStr(data, 'helpOtherSupplies', 500) &&
-        isOptNum(data, 'vulnerabilityScore') &&
-        isOptStr(data, 'vulnerabilityLevel', 100) &&
-        (!( 'dimensionScores' in data ) || data.dimensionScores is map) &&
-        isOptStr(data, 'socialWorkerOpinion', 3000) &&
-        isOptStr(data, 'aiSuggestions', 3000) &&
-        isOptStr(data, 'interviewerName', 200) &&
-        isOptStr(data, 'interviewerPosition', 200) &&
-        isOptStr(data, 'approverName', 200) &&
-        isOptStr(data, 'approverPosition', 200) &&
-        isOptStr(data, 'presidentName', 200) &&
-        isOptStr(data, 'presidentPosition', 200) &&
-        isStr(data.createdAt, 64) &&
-        isStr(data.updatedAt, 64) &&
+        (!('profile' in data) || (
+          data.profile is map &&
+          data.profile.keys().size() <= 14 &&
+          (!('nationalId' in data.profile) || (data.profile.nationalId is string && data.profile.nationalId.size() <= 30)) &&
+          (!('statusReason' in data.profile) || (data.profile.statusReason is string && data.profile.statusReason.size() <= 1000))
+        )) &&
+        (!('location' in data) || (
+          data.location is map &&
+          data.location.keys().size() <= 12 &&
+          (!('landmarkNote' in data.location) || (data.location.landmarkNote is string && data.location.landmarkNote.size() <= 1000)) &&
+          (!('googleMapsUrl' in data.location) || (data.location.googleMapsUrl is string && data.location.googleMapsUrl.size() <= 500)) &&
+          (!('qrCodeDataUrl' in data.location) || (data.location.qrCodeDataUrl is string && data.location.qrCodeDataUrl.size() <= 40000))
+        )) &&
+        (!('medical' in data) || (
+          data.medical is map &&
+          data.medical.keys().size() <= 6 &&
+          (!('chronicDiseases' in data.medical) || (data.medical.chronicDiseases is string && data.medical.chronicDiseases.size() <= 1000)) &&
+          (!('symptomsDetail' in data.medical) || (data.medical.symptomsDetail is string && data.medical.symptomsDetail.size() <= 2000)) &&
+          (!('specialNeeds' in data.medical) || (data.medical.specialNeeds is list && data.medical.specialNeeds.size() <= 20))
+        )) &&
+        (!('householdEconomy' in data) || (
+          data.householdEconomy is map &&
+          data.householdEconomy.keys().size() <= 20 &&
+          (!('economicNote' in data.householdEconomy) || (data.householdEconomy.economicNote is string && data.householdEconomy.economicNote.size() <= 1000))
+        )) &&
+        (!('assistancePlan' in data) || (
+          data.assistancePlan is map &&
+          data.assistancePlan.keys().size() <= 10 &&
+          (!('helpOtherSupplies' in data.assistancePlan) || (data.assistancePlan.helpOtherSupplies is string && data.assistancePlan.helpOtherSupplies.size() <= 500))
+        )) &&
+        (!('assessment' in data) || (
+          data.assessment is map &&
+          data.assessment.keys().size() <= 14 &&
+          (!('socialWorkerOpinion' in data.assessment) || (data.assessment.socialWorkerOpinion is string && data.assessment.socialWorkerOpinion.size() <= 3000)) &&
+          (!('aiSuggestions' in data.assessment) || (data.assessment.aiSuggestions is string && data.assessment.aiSuggestions.size() <= 3000))
+        )) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() <= 64 &&
         data.serverCreatedAt is timestamp &&
         data.serverUpdatedAt is timestamp;
     }
 
     function isValidPatientDelivery(data, patientId, deliveryId) {
-      return data.keys().hasAll([
+      let keys = data.keys().toSet();
+      return keys.hasAll([
           'id', 'patientId', 'ownerUid', 'deliveryDate', 'receivedBy', 'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
-        data.keys().hasOnly([
+        ].toSet()) &&
+        keys.hasOnly([
           'id', 'patientId', 'ownerUid', 'authorizedEmails', 'deliveryDate', 'monthYearLabel',
           'cashAmount', 'cashGiven', 'diaperSize', 'diaperPacks', 'ricePacks',
           'waterPacks', 'waterSize', 'otherItems', 'receivedBy', 'recipientRelation',
           'officerName', 'photoUrl', 'notes', 'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
+        ].toSet()) &&
         isValidId(data.id) &&
         data.id == deliveryId &&
         isValidId(data.patientId) &&
         data.patientId == patientId &&
         isValidId(data.ownerUid) &&
         isValidEmailList(data) &&
-        isStr(data.deliveryDate, 32) &&
-        isOptStr(data, 'monthYearLabel', 80) &&
-        isOptNum(data, 'cashAmount') &&
-        isOptBool(data, 'cashGiven') &&
-        (!( 'diaperSize' in data ) || data.diaperSize in ['S', 'M', 'L', 'XL', 'XXL', 'NONE']) &&
-        isOptNum(data, 'diaperPacks') &&
-        isOptNum(data, 'ricePacks') &&
-        isOptNum(data, 'waterPacks') &&
-        (!( 'waterSize' in data ) || data.waterSize in ['1.5L', '600ML', 'NONE']) &&
-        isOptStr(data, 'otherItems', 500) &&
-        isStr(data.receivedBy, 200) &&
-        isOptStr(data, 'recipientRelation', 100) &&
-        isOptStr(data, 'officerName', 200) &&
-        isOptStr(data, 'photoUrl', 500000) &&
-        isOptStr(data, 'notes', 500) &&
+        data.deliveryDate is string && data.deliveryDate.size() <= 32 &&
+        (!('monthYearLabel' in data) || (data.monthYearLabel is string && data.monthYearLabel.size() <= 80)) &&
+        (!('cashAmount' in data) || data.cashAmount is number) &&
+        (!('cashGiven' in data) || data.cashGiven is bool) &&
+        (!('diaperSize' in data) || data.diaperSize in ['S', 'M', 'L', 'XL', 'XXL', 'NONE']) &&
+        (!('diaperPacks' in data) || data.diaperPacks is number) &&
+        (!('ricePacks' in data) || data.ricePacks is number) &&
+        (!('waterPacks' in data) || data.waterPacks is number) &&
+        (!('waterSize' in data) || data.waterSize in ['1.5L', '600ML', 'NONE']) &&
+        (!('otherItems' in data) || (data.otherItems is string && data.otherItems.size() <= 500)) &&
+        data.receivedBy is string && data.receivedBy.size() <= 200 &&
+        (!('recipientRelation' in data) || (data.recipientRelation is string && data.recipientRelation.size() <= 100)) &&
+        (!('officerName' in data) || (data.officerName is string && data.officerName.size() <= 200)) &&
+        (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500000)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
         data.serverCreatedAt is timestamp &&
         data.serverUpdatedAt is timestamp;
     }
 
     function isValidMediaAttachment(data, parentId, mediaId) {
-      return data.keys().hasAll([
+      let keys = data.keys().toSet();
+      return keys.hasAll([
           'id', 'parentId', 'ownerUid', 'kind', 'dataUrl', 'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
-        data.keys().hasOnly([
+        ].toSet()) &&
+        keys.hasOnly([
           'id', 'parentId', 'ownerUid', 'authorizedEmails', 'kind', 'category', 'title', 'fileName',
           'fileType', 'dataUrl', 'fileSize', 'caption', 'timestamp', 'uploadDate',
           'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
+        ].toSet()) &&
         isValidId(data.id) &&
         data.id == mediaId &&
         isValidId(data.parentId) &&
@@ -403,61 +375,49 @@ service cloud.firestore {
         isValidId(data.ownerUid) &&
         isValidEmailList(data) &&
         data.kind in ['photo', 'document'] &&
-        isOptStr(data, 'category', 64) &&
-        isOptStr(data, 'title', 200) &&
-        isOptStr(data, 'fileName', 255) &&
-        isOptStr(data, 'fileType', 120) &&
-        isStr(data.dataUrl, 850000) &&
-        isOptNum(data, 'fileSize') &&
-        isOptStr(data, 'caption', 500) &&
-        isOptStr(data, 'timestamp', 100) &&
-        isOptStr(data, 'uploadDate', 64) &&
+        (!('category' in data) || (data.category is string && data.category.size() <= 64)) &&
+        (!('title' in data) || (data.title is string && data.title.size() <= 200)) &&
+        (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 255)) &&
+        (!('fileType' in data) || (data.fileType is string && data.fileType.size() <= 120)) &&
+        data.dataUrl is string && data.dataUrl.size() <= 850000 &&
+        (!('fileSize' in data) || data.fileSize is number) &&
+        (!('caption' in data) || (data.caption is string && data.caption.size() <= 500)) &&
+        (!('timestamp' in data) || (data.timestamp is string && data.timestamp.size() <= 100)) &&
+        (!('uploadDate' in data) || (data.uploadDate is string && data.uploadDate.size() <= 64)) &&
         data.serverCreatedAt is timestamp &&
         data.serverUpdatedAt is timestamp;
     }
 
     match /patients/{patientId} {
       allow get: if isValidId(patientId) && (isStaffAdmin() || (resource == null && isAuthorizedStaff()) || (resource != null && (isOwner(existing()) || isSharedTeamMember(existing()))));
-      allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
-      allow create: if isAuthorizedStaff() &&
+      allow list: if isSignedIn() && (hasBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
+      allow create: if isSignedIn() &&
         isValidId(patientId) &&
         isValidPatientRecord(incoming(), patientId) &&
         incoming().ownerUid == request.auth.uid &&
         incoming().serverCreatedAt == request.time &&
-        incoming().serverUpdatedAt == request.time;
-      allow update: if isAuthorizedStaff() &&
+        incoming().serverUpdatedAt == request.time &&
+        isAuthorizedStaff();
+      allow update: if isSignedIn() &&
         isValidId(patientId) &&
         isValidPatientRecord(incoming(), patientId) &&
         incoming().serverUpdatedAt == request.time &&
         (
-          isSuperAdmin() ||
+          hasSuperAdminEmail() ||
           (
             (!('id' in existing()) || incoming().id == existing().id) &&
             (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
             (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
-            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
-            (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null || !(existing().serverCreatedAt is timestamp) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
+            (isStaffAdmin() || ((isOwner(existing()) || isSharedTeamMember(existing())) && exists(/databases/$(database)/documents/settings/workspace) && isSharedTeamMember(get(/databases/$(database)/documents/settings/workspace).data))) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'code', 'admissionDate', 'status', 'statusReason', 'statusHistory',
-              'nationalId', 'title', 'fullName', 'birthDate', 'age', 'gender',
-              'phone', 'caregiverName', 'caregiverRelation', 'caregiverPhone',
-              'idAddress', 'isSameAddress', 'currentAddress',
-              'latitude', 'longitude', 'locationAccuracy', 'landmarkNote', 'googleMapsUrl', 'qrCodeDataUrl',
-              'mobilityLevel', 'chronicDiseases', 'symptomsDetail', 'disabilityCard', 'specialNeeds',
-              'familyMembersTotal', 'familyMembersMale', 'familyMembersFemale',
-              'incomeSalary', 'incomeDisability', 'incomeElderly', 'incomeStateWelfare', 'incomeOther',
-              'expenseRentHouse', 'expenseRentLand', 'expenseLiving', 'expenseMedicalTravel', 'expenseDebt', 'expenseOther',
-              'monthlyExpense', 'netIncome', 'economicNote',
-              'helpCashEnabled', 'helpCashAmount', 'helpDiaperSize', 'helpDiaperPacks',
-              'helpRicePacks', 'helpWaterSize', 'helpWaterPacks', 'helpOtherSupplies',
-              'vulnerabilityScore', 'vulnerabilityLevel', 'dimensionScores',
-              'socialWorkerOpinion', 'aiSuggestions',
-              'interviewerName', 'interviewerPosition', 'approverName', 'approverPosition', 'presidentName', 'presidentPosition',
+              'code', 'status', 'fullName', 'mobilityLevel',
+              'profile', 'location', 'medical', 'householdEconomy', 'assistancePlan', 'assessment',
               'updatedAt', 'serverUpdatedAt'
             ])
           )
         );
-      allow delete: if isValidId(patientId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+      allow delete: if isValidId(patientId) && (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
 
       match /deliveries/{deliveryId} {
         allow get: if isValidId(patientId) && isValidId(deliveryId) && (
@@ -489,7 +449,7 @@ service cloud.firestore {
             (!('id' in existing()) || incoming().id == existing().id) &&
             (!('patientId' in existing()) || incoming().patientId == existing().patientId) &&
             (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
-            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null || !(existing().serverCreatedAt is timestamp) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'deliveryDate', 'monthYearLabel', 'cashAmount', 'cashGiven',
@@ -531,7 +491,7 @@ service cloud.firestore {
             (!('id' in existing()) || incoming().id == existing().id) &&
             (!('parentId' in existing()) || incoming().parentId == existing().parentId) &&
             (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
-            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null || !(existing().serverCreatedAt is timestamp) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'category', 'caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'timestamp', 'uploadDate', 'serverUpdatedAt'
@@ -543,101 +503,90 @@ service cloud.firestore {
 
     // 6. Funeral Assistance Records (แบบ ฌศ.01)
     function isValidFuneralRecord(data, funeralId) {
-      return data.keys().hasAll([
+      let keys = data.keys().toSet();
+      return keys.hasAll([
           'id', 'ownerUid', 'code', 'status', 'deceasedName', 'applicantName',
           'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
-        data.keys().hasOnly([
+        ].toSet()) &&
+        keys.hasOnly([
           'id', 'ownerUid', 'authorizedEmails', 'code', 'applicationDate', 'status', 'statusNote',
-          'deceasedTitle', 'deceasedName', 'deceasedNationalId', 'deceasedAge',
-          'deceasedDeathDate', 'deceasedDeathTime', 'causeOfDeath', 'deathPlace', 'deceasedAddress',
-          'applicantTitle', 'applicantName', 'applicantNationalId', 'applicantPhone',
-          'applicantRelation', 'applicantAddress', 'applicantPovertyReason',
-          'templeName', 'cremationDate', 'cremationTime', 'assistanceAmount',
-          'coffinProvided', 'transportProvided', 'shroudClothProvided', 'otherItems',
-          'officerId', 'officerName', 'officerPosition', 'approverId', 'approverName', 'approverPosition', 'approvalDate',
+          'deceasedName', 'applicantName',
+          'deceasedInfo', 'applicantInfo', 'cremationAid', 'signatories',
           'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
+        ].toSet()) &&
         isValidId(data.id) &&
         data.id == funeralId &&
         isValidId(data.ownerUid) &&
         isValidEmailList(data) &&
-        isStr(data.code, 40) && data.code.size() >= 1 &&
+        data.code is string && data.code.size() >= 1 && data.code.size() <= 40 &&
+        (!('applicationDate' in data) || (data.applicationDate is string && data.applicationDate.size() <= 32)) &&
         data.status in ['pending', 'approved', 'completed', 'rejected'] &&
-        isOptStr(data, 'applicationDate', 32) &&
-        isOptStr(data, 'statusNote', 1000) &&
-        isOptStr(data, 'deceasedTitle', 30) &&
-        isStr(data.deceasedName, 200) && data.deceasedName.size() >= 1 &&
-        isOptStr(data, 'deceasedNationalId', 30) &&
-        isOptNum(data, 'deceasedAge') &&
-        isOptStr(data, 'deceasedDeathDate', 32) &&
-        isOptStr(data, 'deceasedDeathTime', 16) &&
-        isOptStr(data, 'causeOfDeath', 500) &&
-        isOptStr(data, 'deathPlace', 300) &&
-        isOptStr(data, 'deceasedAddress', 500) &&
-        isOptStr(data, 'applicantTitle', 30) &&
-        isStr(data.applicantName, 200) && data.applicantName.size() >= 1 &&
-        isOptStr(data, 'applicantNationalId', 30) &&
-        isOptStr(data, 'applicantPhone', 50) &&
-        isOptStr(data, 'applicantRelation', 100) &&
-        isOptStr(data, 'applicantAddress', 500) &&
-        isOptStr(data, 'applicantPovertyReason', 1000) &&
-        isOptStr(data, 'templeName', 300) &&
-        isOptStr(data, 'cremationDate', 32) &&
-        isOptStr(data, 'cremationTime', 16) &&
-        isOptNum(data, 'assistanceAmount') &&
-        isOptBool(data, 'coffinProvided') &&
-        isOptBool(data, 'transportProvided') &&
-        isOptBool(data, 'shroudClothProvided') &&
-        isOptStr(data, 'otherItems', 500) &&
-        isOptStr(data, 'officerId', 128) &&
-        isOptStr(data, 'officerName', 200) &&
-        isOptStr(data, 'officerPosition', 200) &&
-        isOptStr(data, 'approverId', 128) &&
-        isOptStr(data, 'approverName', 200) &&
-        isOptStr(data, 'approverPosition', 200) &&
-        isOptStr(data, 'approvalDate', 32) &&
-        isStr(data.createdAt, 64) &&
-        isStr(data.updatedAt, 64) &&
+        (!('statusNote' in data) || (data.statusNote is string && data.statusNote.size() <= 1000)) &&
+        data.deceasedName is string && data.deceasedName.size() >= 1 && data.deceasedName.size() <= 200 &&
+        data.applicantName is string && data.applicantName.size() >= 1 && data.applicantName.size() <= 200 &&
+        (!('deceasedInfo' in data) || (
+          data.deceasedInfo is map &&
+          data.deceasedInfo.keys().size() <= 10 &&
+          (!('deceasedAge' in data.deceasedInfo) || data.deceasedInfo.deceasedAge is number) &&
+          (!('deceasedAddress' in data.deceasedInfo) || (data.deceasedInfo.deceasedAddress is string && data.deceasedInfo.deceasedAddress.size() <= 500)) &&
+          (!('causeOfDeath' in data.deceasedInfo) || (data.deceasedInfo.causeOfDeath is string && data.deceasedInfo.causeOfDeath.size() <= 500))
+        )) &&
+        (!('applicantInfo' in data) || (
+          data.applicantInfo is map &&
+          data.applicantInfo.keys().size() <= 8 &&
+          (!('applicantAddress' in data.applicantInfo) || (data.applicantInfo.applicantAddress is string && data.applicantInfo.applicantAddress.size() <= 500)) &&
+          (!('applicantPovertyReason' in data.applicantInfo) || (data.applicantInfo.applicantPovertyReason is string && data.applicantInfo.applicantPovertyReason.size() <= 1000))
+        )) &&
+        (!('cremationAid' in data) || (
+          data.cremationAid is map &&
+          data.cremationAid.keys().size() <= 10 &&
+          (!('assistanceAmount' in data.cremationAid) || data.cremationAid.assistanceAmount is number) &&
+          (!('coffinProvided' in data.cremationAid) || data.cremationAid.coffinProvided is bool) &&
+          (!('transportProvided' in data.cremationAid) || data.cremationAid.transportProvided is bool) &&
+          (!('shroudClothProvided' in data.cremationAid) || data.cremationAid.shroudClothProvided is bool) &&
+          (!('otherItems' in data.cremationAid) || (data.cremationAid.otherItems is string && data.cremationAid.otherItems.size() <= 500))
+        )) &&
+        (!('signatories' in data) || (
+          data.signatories is map &&
+          data.signatories.keys().size() <= 8
+        )) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() <= 64 &&
         data.serverCreatedAt is timestamp &&
         data.serverUpdatedAt is timestamp;
     }
 
     match /funerals/{funeralId} {
       allow get: if isValidId(funeralId) && (isStaffAdmin() || (resource == null && isAuthorizedStaff()) || (resource != null && (isOwner(existing()) || isSharedTeamMember(existing()))));
-      allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
-      allow create: if isAuthorizedStaff() &&
+      allow list: if isSignedIn() && (hasBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
+      allow create: if isSignedIn() &&
         isValidId(funeralId) &&
         isValidFuneralRecord(incoming(), funeralId) &&
         incoming().ownerUid == request.auth.uid &&
         incoming().serverCreatedAt == request.time &&
-        incoming().serverUpdatedAt == request.time;
-      allow update: if isAuthorizedStaff() &&
+        incoming().serverUpdatedAt == request.time &&
+        isAuthorizedStaff();
+      allow update: if isSignedIn() &&
         isValidId(funeralId) &&
         isValidFuneralRecord(incoming(), funeralId) &&
         incoming().serverUpdatedAt == request.time &&
         (
-          isSuperAdmin() ||
+          hasSuperAdminEmail() ||
           (
             (!('id' in existing()) || incoming().id == existing().id) &&
             (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
             (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
-            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
-            (isStaffAdmin() || (!(existing().status in ['completed', 'rejected']) && (isOwner(existing()) || isSharedTeamMember(existing())))) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null || !(existing().serverCreatedAt is timestamp) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
+            (isStaffAdmin() || (!(existing().status in ['completed', 'rejected']) && (isOwner(existing()) || isSharedTeamMember(existing())) && exists(/databases/$(database)/documents/settings/workspace) && isSharedTeamMember(get(/databases/$(database)/documents/settings/workspace).data))) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'code', 'applicationDate', 'status', 'statusNote',
-              'deceasedTitle', 'deceasedName', 'deceasedNationalId', 'deceasedAge',
-              'deceasedDeathDate', 'deceasedDeathTime', 'causeOfDeath', 'deathPlace', 'deceasedAddress',
-              'applicantTitle', 'applicantName', 'applicantNationalId', 'applicantPhone',
-              'applicantRelation', 'applicantAddress', 'applicantPovertyReason',
-              'templeName', 'cremationDate', 'cremationTime', 'assistanceAmount',
-              'coffinProvided', 'transportProvided', 'shroudClothProvided', 'otherItems',
-              'officerId', 'officerName', 'officerPosition', 'approverId', 'approverName', 'approverPosition', 'approvalDate',
+              'deceasedName', 'applicantName',
+              'deceasedInfo', 'applicantInfo', 'cremationAid', 'signatories',
               'updatedAt', 'serverUpdatedAt'
             ])
           )
         );
-      allow delete: if isValidId(funeralId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+      allow delete: if isValidId(funeralId) && (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
 
       match /media/{mediaId} {
         allow get: if isValidId(funeralId) && isValidId(mediaId) && (
@@ -669,7 +618,7 @@ service cloud.firestore {
             (!('id' in existing()) || incoming().id == existing().id) &&
             (!('parentId' in existing()) || incoming().parentId == existing().parentId) &&
             (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
-            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null || !(existing().serverCreatedAt is timestamp) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'category', 'caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'timestamp', 'uploadDate', 'serverUpdatedAt'
@@ -681,104 +630,83 @@ service cloud.firestore {
 
     // 7. Donation Records (แบบ บจ.01)
     function isValidDonationRecord(data, donationId) {
-      return data.keys().hasAll([
+      let keys = data.keys().toSet();
+      return keys.hasAll([
           'id', 'ownerUid', 'code', 'status', 'recipientType',
           'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
-        data.keys().hasOnly([
+        ].toSet()) &&
+        keys.hasOnly([
           'id', 'ownerUid', 'authorizedEmails', 'code', 'distributionDate', 'status', 'recipientType',
-          'individualTitle', 'individualName', 'individualNationalId', 'individualPhone',
-          'individualAddress', 'individualCategory', 'individualNeedReason',
-          'agencyName', 'agencyType', 'agencyContactPerson', 'agencyContactPosition',
-          'agencyPhone', 'agencyAddress', 'agencyRequestPurpose', 'officialLetterNo',
-          'waterPacks', 'waterUnit', 'dryFoodCount', 'dryFoodUnit', 'riceBags', 'riceKg',
-          'diaperPacks', 'diaperSize', 'otherItems', 'notes',
-          'handoverPlace', 'deliveryMethod',
-          'officerId', 'officerName', 'officerPosition', 'approverName', 'approverPosition',
+          'recipientInfo', 'itemsSummary', 'handoverAndSignatories',
           'createdAt', 'updatedAt', 'serverCreatedAt', 'serverUpdatedAt'
-        ]) &&
+        ].toSet()) &&
         isValidId(data.id) &&
         data.id == donationId &&
         isValidId(data.ownerUid) &&
         isValidEmailList(data) &&
-        isStr(data.code, 40) && data.code.size() >= 1 &&
-        isOptStr(data, 'distributionDate', 32) &&
+        data.code is string && data.code.size() >= 1 && data.code.size() <= 40 &&
+        (!('distributionDate' in data) || (data.distributionDate is string && data.distributionDate.size() <= 32)) &&
         data.status in ['completed', 'pending', 'cancelled'] &&
         data.recipientType in ['individual', 'government'] &&
-        isOptStr(data, 'individualTitle', 30) &&
-        isOptStr(data, 'individualName', 200) &&
-        isOptStr(data, 'individualNationalId', 30) &&
-        isOptStr(data, 'individualPhone', 50) &&
-        isOptStr(data, 'individualAddress', 500) &&
-        isOptStr(data, 'individualCategory', 100) &&
-        isOptStr(data, 'individualNeedReason', 1000) &&
-        isOptStr(data, 'agencyName', 300) &&
-        isOptStr(data, 'agencyType', 120) &&
-        isOptStr(data, 'agencyContactPerson', 200) &&
-        isOptStr(data, 'agencyContactPosition', 200) &&
-        isOptStr(data, 'agencyPhone', 50) &&
-        isOptStr(data, 'agencyAddress', 500) &&
-        isOptStr(data, 'agencyRequestPurpose', 1000) &&
-        isOptStr(data, 'officialLetterNo', 100) &&
-        isOptNum(data, 'waterPacks') &&
-        isOptStr(data, 'waterUnit', 40) &&
-        isOptNum(data, 'dryFoodCount') &&
-        isOptStr(data, 'dryFoodUnit', 40) &&
-        isOptNum(data, 'riceBags') &&
-        isOptNum(data, 'riceKg') &&
-        isOptNum(data, 'diaperPacks') &&
-        isOptStr(data, 'diaperSize', 40) &&
-        (!( 'otherItems' in data ) || (data.otherItems is list && data.otherItems.size() <= 30 && (data.otherItems.size() == 0 || data.otherItems[0] is map))) &&
-        isOptStr(data, 'notes', 1000) &&
-        isOptStr(data, 'handoverPlace', 300) &&
-        isOptStr(data, 'deliveryMethod', 200) &&
-        isOptStr(data, 'officerId', 128) &&
-        isOptStr(data, 'officerName', 200) &&
-        isOptStr(data, 'officerPosition', 200) &&
-        isOptStr(data, 'approverName', 200) &&
-        isOptStr(data, 'approverPosition', 200) &&
-        isStr(data.createdAt, 64) &&
-        isStr(data.updatedAt, 64) &&
+        (!('recipientInfo' in data) || (
+          data.recipientInfo is map &&
+          data.recipientInfo.keys().size() <= 18 &&
+          (!('individualName' in data.recipientInfo) || (data.recipientInfo.individualName is string && data.recipientInfo.individualName.size() <= 200)) &&
+          (!('individualNeedReason' in data.recipientInfo) || (data.recipientInfo.individualNeedReason is string && data.recipientInfo.individualNeedReason.size() <= 1000)) &&
+          (!('agencyName' in data.recipientInfo) || (data.recipientInfo.agencyName is string && data.recipientInfo.agencyName.size() <= 300)) &&
+          (!('agencyRequestPurpose' in data.recipientInfo) || (data.recipientInfo.agencyRequestPurpose is string && data.recipientInfo.agencyRequestPurpose.size() <= 1000))
+        )) &&
+        (!('itemsSummary' in data) || (
+          data.itemsSummary is map &&
+          data.itemsSummary.keys().size() <= 12 &&
+          (!('waterPacks' in data.itemsSummary) || data.itemsSummary.waterPacks is number) &&
+          (!('dryFoodCount' in data.itemsSummary) || data.itemsSummary.dryFoodCount is number) &&
+          (!('riceBags' in data.itemsSummary) || data.itemsSummary.riceBags is number) &&
+          (!('riceKg' in data.itemsSummary) || data.itemsSummary.riceKg is number) &&
+          (!('diaperPacks' in data.itemsSummary) || data.itemsSummary.diaperPacks is number) &&
+          (!('otherItems' in data.itemsSummary) || (data.itemsSummary.otherItems is list && data.itemsSummary.otherItems.size() <= 30)) &&
+          (!('notes' in data.itemsSummary) || (data.itemsSummary.notes is string && data.itemsSummary.notes.size() <= 1000))
+        )) &&
+        (!('handoverAndSignatories' in data) || (
+          data.handoverAndSignatories is map &&
+          data.handoverAndSignatories.keys().size() <= 8
+        )) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() <= 64 &&
         data.serverCreatedAt is timestamp &&
         data.serverUpdatedAt is timestamp;
     }
 
     match /donations/{donationId} {
       allow get: if isValidId(donationId) && (isStaffAdmin() || (resource == null && isAuthorizedStaff()) || (resource != null && (isOwner(existing()) || isSharedTeamMember(existing()))));
-      allow list: if isSignedIn() && (isSuperAdmin() || isBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
-      allow create: if isAuthorizedStaff() &&
+      allow list: if isSignedIn() && (hasBuiltInStaffEmail() || existing().ownerUid == request.auth.uid || isSharedTeamMember(existing()));
+      allow create: if isSignedIn() &&
         isValidId(donationId) &&
         isValidDonationRecord(incoming(), donationId) &&
         incoming().ownerUid == request.auth.uid &&
         incoming().serverCreatedAt == request.time &&
-        incoming().serverUpdatedAt == request.time;
-      allow update: if isAuthorizedStaff() &&
+        incoming().serverUpdatedAt == request.time &&
+        isAuthorizedStaff();
+      allow update: if isSignedIn() &&
         isValidId(donationId) &&
         isValidDonationRecord(incoming(), donationId) &&
         incoming().serverUpdatedAt == request.time &&
         (
-          isSuperAdmin() ||
+          hasSuperAdminEmail() ||
           (
             (!('id' in existing()) || incoming().id == existing().id) &&
             (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
             (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
-            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
-            (isStaffAdmin() || (existing().status != 'cancelled' && (isOwner(existing()) || isSharedTeamMember(existing())))) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null || !(existing().serverCreatedAt is timestamp) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
+            (isStaffAdmin() || (existing().status != 'cancelled' && (isOwner(existing()) || isSharedTeamMember(existing())) && exists(/databases/$(database)/documents/settings/workspace) && isSharedTeamMember(get(/databases/$(database)/documents/settings/workspace).data))) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'code', 'distributionDate', 'status', 'recipientType',
-              'individualTitle', 'individualName', 'individualNationalId', 'individualPhone',
-              'individualAddress', 'individualCategory', 'individualNeedReason',
-              'agencyName', 'agencyType', 'agencyContactPerson', 'agencyContactPosition',
-              'agencyPhone', 'agencyAddress', 'agencyRequestPurpose', 'officialLetterNo',
-              'waterPacks', 'waterUnit', 'dryFoodCount', 'dryFoodUnit', 'riceBags', 'riceKg',
-              'diaperPacks', 'diaperSize', 'otherItems', 'notes',
-              'handoverPlace', 'deliveryMethod',
-              'officerId', 'officerName', 'officerPosition', 'approverName', 'approverPosition',
+              'recipientInfo', 'itemsSummary', 'handoverAndSignatories',
               'updatedAt', 'serverUpdatedAt'
             ])
           )
         );
-      allow delete: if isValidId(donationId) && (isSuperAdmin() || isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
+      allow delete: if isValidId(donationId) && (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing()));
 
       match /media/{mediaId} {
         allow get: if isValidId(donationId) && isValidId(mediaId) && (
@@ -810,7 +738,7 @@ service cloud.firestore {
             (!('id' in existing()) || incoming().id == existing().id) &&
             (!('parentId' in existing()) || incoming().parentId == existing().parentId) &&
             (!('ownerUid' in existing()) ? incoming().ownerUid == request.auth.uid : incoming().ownerUid == existing().ownerUid) &&
-            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
+            (!('serverCreatedAt' in existing()) || existing().serverCreatedAt == null || !(existing().serverCreatedAt is timestamp) ? incoming().serverCreatedAt == request.time : incoming().serverCreatedAt == existing().serverCreatedAt) &&
             (isStaffAdmin() || isOwner(existing()) || isSharedTeamMember(existing())) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'category', 'caption', 'title', 'dataUrl', 'fileName', 'fileType', 'fileSize', 'timestamp', 'uploadDate', 'serverUpdatedAt'

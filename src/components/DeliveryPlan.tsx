@@ -55,7 +55,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
   const activePatients = patients.filter((p) => p.status === 'active');
   const displayedPatients = sortPatientsByCodeAsc(
     activePatients.filter(
-      (p) => selectedDistrict === 'all' || p.currentAddress.district === selectedDistrict
+      (p) => selectedDistrict === 'all' || p.currentAddress?.district === selectedDistrict
     )
   );
 
@@ -136,15 +136,15 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto py-6 px-4">
+    <div className="w-full py-3 sm:py-5 px-2.5 sm:px-4 lg:px-6">
       {/* Title & Filter Bar */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs mb-6 flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs mb-4 sm:mb-6 flex flex-wrap items-center justify-between gap-3 sm:gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="p-2 bg-blue-100 text-blue-800 rounded-xl">
+            <span className="p-2 bg-blue-100 text-blue-800 rounded-xl shrink-0">
               <Package className="w-5 h-5" />
             </span>
-            <h2 className="text-xl font-bold text-slate-900">
+            <h2 className="text-base sm:text-xl font-bold text-slate-900">
               📦 แผนการส่งมอบสิ่งของ & เยี่ยมบ้านประจำเดือน
             </h2>
           </div>
@@ -153,12 +153,12 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full lg:w-auto">
           {/* District Selector */}
           <select
             value={selectedDistrict}
             onChange={(e) => setSelectedDistrict(e.target.value)}
-            className="text-xs px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800"
+            className="w-full sm:w-auto text-xs px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800"
           >
             <option value="all">📍 จัดสายส่งมอบ: ทุกอำเภอ</option>
             {SAMUT_PRAKAN_DISTRICTS.map((d) => (
@@ -173,7 +173,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
             type="text"
             value={currentMonth}
             onChange={(e) => onUpdateDeliverySettings({ currentMonth: e.target.value })}
-            className="text-xs px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-medium w-40 text-center"
+            className="w-full sm:w-44 text-xs px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-medium text-center"
             placeholder="รอบเดือน เช่น พฤศจิกายน พ.ศ. 2569"
           />
 
@@ -181,17 +181,17 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
           <button
             type="button"
             onClick={handlePrintSignSheet}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition cursor-pointer"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition cursor-pointer"
             title="พิมพ์แผนการส่งมอบสิ่งของ A4 พร้อมลายเซ็นผู้รับมอบและเจ้าหน้าที่ท้ายกระดาษ"
           >
-            <Printer className="w-4 h-4" />
+            <Printer className="w-4 h-4 shrink-0" />
             <span>พิมพ์แผนการส่งมอบ A4 (พร้อมช่องลายเซ็น)</span>
           </button>
         </div>
       </div>
 
       {/* Aggregate Stock Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6">
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
           <div className="text-xs text-slate-500 font-medium">รวมผู้ป่วยที่จะส่งมอบ</div>
           <div className="text-2xl font-black text-slate-900 mt-1">
@@ -277,15 +277,15 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
       </div>
 
       {/* Diaper Breakdown Pill Cards */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs mb-6">
+      <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-xs mb-4 sm:mb-6">
         <div className="text-xs font-bold text-slate-800 mb-2.5 flex items-center gap-2">
           <span>🩲 ยอดรวมผ้าอ้อมผู้ใหญ่ที่ต้องเบิกจากคลัง (แยกตามไซส์):</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5 sm:gap-3">
           {(['S', 'M', 'L', 'XL', 'XXL'] as DiaperSize[]).map((size) => (
             <div key={size} className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center">
               <span className="text-xs font-bold text-slate-600 block">ไซส์ {size}</span>
-              <span className="text-xl font-black text-blue-900 block mt-0.5">
+              <span className="text-xl font-black text-blue-900 block mt-0.5 tabular-nums">
                 {diaperCounts[size]}
               </span>
               <span className="text-[10px] text-slate-500">ห่อ</span>
@@ -296,7 +296,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
 
       {/* Printable Delivery Dispatch Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+        <div className="p-3.5 sm:p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-bold text-sm text-slate-900">
             ตารางลงชื่อรับมอบสิ่งของ (รอบเดือน: {currentMonth})
           </h3>
@@ -334,7 +334,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
 
               <div className="text-slate-700 bg-slate-50 rounded-lg p-2.5 border border-slate-100 space-y-1">
                 <div>
-                  เลขที่ {patient.currentAddress.houseNo} ต.{patient.currentAddress.subdistrict} อ.{patient.currentAddress.district}
+                  เลขที่ {patient.currentAddress?.houseNo || '-'} ต.{patient.currentAddress?.subdistrict || '-'} อ.{patient.currentAddress?.district || '-'}
                 </div>
                 {patient.landmarkNote && (
                   <div className="text-[11px] text-slate-500 italic">จุดสังเกต: {patient.landmarkNote}</div>
@@ -405,7 +405,7 @@ export const DeliveryPlan: React.FC<DeliveryPlanProps> = ({
                   </td>
                   <td className="p-3 max-w-xs">
                     <div className="text-slate-800 line-clamp-2">
-                      เลขที่ {patient.currentAddress.houseNo} ต.{patient.currentAddress.subdistrict} อ.{patient.currentAddress.district}
+                      เลขที่ {patient.currentAddress?.houseNo || '-'} ต.{patient.currentAddress?.subdistrict || '-'} อ.{patient.currentAddress?.district || '-'}
                     </div>
                     {patient.landmarkNote && (
                       <div className="text-[10px] text-slate-500 italic mt-0.5 line-clamp-1">

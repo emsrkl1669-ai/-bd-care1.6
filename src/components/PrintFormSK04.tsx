@@ -40,14 +40,22 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
     };
   }, []);
 
+  const computeFitScale = () => {
+    const sheetWidth = 794;
+    const sheetHeight = 1123;
+    const isMobile = window.innerWidth < 1024;
+    const horizPad = window.innerWidth < 640 ? 16 : 48;
+    const vertPad = window.innerWidth < 640 ? 190 : 165;
+    const fitW = (window.innerWidth - horizPad) / sheetWidth;
+    const fitH = (window.innerHeight - vertPad) / sheetHeight;
+    const fit = isMobile ? fitW : Math.min(fitW, fitH);
+    return parseFloat(Math.min(1, Math.max(0.28, fit)).toFixed(2));
+  };
+
   // Auto-calculate best scale to fit comfortably on screen
   useEffect(() => {
     const updateFitScale = () => {
-      const availableHeight = window.innerHeight - 150;
-      // In single-page mode or initial view, fit one A4 page (~1123px)
-      const targetHeight = activePage === 'all' ? 1123 : 1123;
-      const fit = Math.min(1, Math.max(0.4, availableHeight / targetHeight));
-      setScale(parseFloat(fit.toFixed(2)));
+      setScale(computeFitScale());
     };
 
     updateFitScale();
@@ -123,7 +131,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
         {/* Second Row: Page Selection Tabs & Zoom Controls */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
           {/* Page Preview Switcher */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold overflow-x-auto no-scrollbar max-w-full">
             <button
               type="button"
               onClick={() => setActivePage('all')}
@@ -205,11 +213,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold">
             <button
               type="button"
-              onClick={() => {
-                const availableHeight = window.innerHeight - 150;
-                const fit = Math.min(1, Math.max(0.4, availableHeight / 1150));
-                setScale(parseFloat(fit.toFixed(2)));
-              }}
+              onClick={() => setScale(computeFitScale())}
               className="px-2 py-1 bg-white hover:bg-slate-50 text-slate-800 rounded shadow-2xs border border-slate-200 transition cursor-pointer flex items-center gap-1"
               title="ย่อขนาดให้เห็นพอดีหน้าจอ"
             >
@@ -231,7 +235,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
             <div className="flex items-center gap-0.5 border-l border-slate-200 pl-1">
               <button
                 type="button"
-                onClick={() => setScale((s) => Math.max(0.35, parseFloat((s - 0.1).toFixed(2))))}
+                onClick={() => setScale((s) => Math.max(0.28, parseFloat((s - 0.1).toFixed(2))))}
                 className="p-1 text-slate-600 hover:text-slate-900 rounded cursor-pointer"
                 title="ย่อ (-)"
               >
@@ -267,15 +271,18 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
       </div>
 
       {/* Scaled A4 Container (The Selected Focus Element) */}
-      <div 
-        className="w-full flex flex-col items-center gap-6 a4-container transition-all duration-150 origin-top pb-12"
-        style={{
-          transform: `scale(${scale})`,
-          transformOrigin: 'top center',
-          // Accurately compute bottom margin so that the entire document scrolls cleanly without clipping
-          marginBottom: scale < 1 ? `-${Math.round((1 - scale) * (activePage === 'all' ? 3420 : 1150))}px` : undefined,
-        }}
-      >
+      <div className="w-full overflow-x-auto flex print:block print:overflow-visible">
+        <div 
+          className="w-fit mx-auto flex flex-col items-center gap-6 a4-container transition-all duration-150 origin-top pb-12"
+          style={{
+            transform: `scale(${scale})`,
+            transformOrigin: 'top center',
+            marginLeft: scale < 1 ? `-${Math.round(((1 - scale) * 794) / 2)}px` : undefined,
+            marginRight: scale < 1 ? `-${Math.round(((1 - scale) * 794) / 2)}px` : undefined,
+            // Accurately compute bottom margin so that the entire document scrolls cleanly without clipping
+            marginBottom: scale < 1 ? `-${Math.round((1 - scale) * (activePage === 'all' ? 3420 : 1150))}px` : undefined,
+          }}
+        >
         
         {/* ============================================================== */}
         {/* PAGE 1: ข้อมูลประวัติผู้ป่วยยากไร้, สภาพเศรษฐกิจ, รายการช่วยเหลือ, ลายเซ็น */}
@@ -399,14 +406,14 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
 
               {/* ID Address */}
               <div>
-                <span className="font-bold">ที่อยู่ตามบัตรประชาชน:</span> เลขที่ {patient.idAddress.houseNo || '-'} ม.{patient.idAddress.moo || '-'} ตรอก {patient.idAddress.trok || '-'} ซอย {patient.idAddress.soi || '-'} ถนน {patient.idAddress.road || '-'} ตำบล {patient.idAddress.subdistrict || '-'} อำเภอ {patient.idAddress.district || '-'} จังหวัด {patient.idAddress.province || '-'}
+                <span className="font-bold">ที่อยู่ตามบัตรประชาชน:</span> เลขที่ {patient.idAddress?.houseNo || '-'} ม.{patient.idAddress?.moo || '-'} ตรอก {patient.idAddress?.trok || '-'} ซอย {patient.idAddress?.soi || '-'} ถนน {patient.idAddress?.road || '-'} ตำบล {patient.idAddress?.subdistrict || '-'} อำเภอ {patient.idAddress?.district || '-'} จังหวัด {patient.idAddress?.province || '-'}
               </div>
 
               {/* Current Address */}
               <div>
                 <span className="font-bold">ที่อยู่ปัจจุบัน:</span>{' '}
                 {patient.isSameAddress ? '(ที่อยู่เดียวกันกับบัตรประชาชน/ทะเบียนบ้าน) ' : ''}
-                เลขที่ {patient.currentAddress.houseNo} ตึก/อาคาร/หมู่บ้าน {patient.currentAddress.buildingVillage || '-'} ตรอก {patient.currentAddress.trok || '-'} ซอย {patient.currentAddress.soi || '-'} ถนน {patient.currentAddress.road || '-'} ตำบล {patient.currentAddress.subdistrict} อำเภอ {patient.currentAddress.district} จังหวัด {patient.currentAddress.province}
+                เลขที่ {patient.currentAddress?.houseNo || '-'} ตึก/อาคาร/หมู่บ้าน {patient.currentAddress?.buildingVillage || '-'} ตรอก {patient.currentAddress?.trok || '-'} ซอย {patient.currentAddress?.soi || '-'} ถนน {patient.currentAddress?.road || '-'} ตำบล {patient.currentAddress?.subdistrict || '-'} อำเภอ {patient.currentAddress?.district || '-'} จังหวัด {patient.currentAddress?.province || '-'}
               </div>
 
               {/* Illness & Disability */}
@@ -425,10 +432,10 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
               <div className="grid grid-cols-12 gap-1.5">
                 <div className="col-span-7">
                   <span className="font-bold">บัตรประจำตัวผู้พิการ:</span>{' '}
-                  {patient.disabilityCard.hasCard ? (
+                  {patient.disabilityCard?.hasCard ? (
                     <span>
-                      {patient.disabilityCard.type || 'ประเภท 3'}{' '}
-                      เลขที่: {patient.disabilityCard.cardNumber || '-'}
+                      {patient.disabilityCard?.type || 'ประเภท 3'}{' '}
+                      เลขที่: {patient.disabilityCard?.cardNumber || '-'}
                     </span>
                   ) : (
                     <span>ไม่มีบัตรประจำตัวผู้พิการ</span>
@@ -715,7 +722,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
 
             <div className="text-xs mb-3 font-medium">
               <span className="font-bold">ผู้ป่วย:</span> {patient.title} {patient.fullName} |{' '}
-              <span className="font-bold">ที่อยู่:</span> เลขที่ {patient.currentAddress.houseNo} ต.{patient.currentAddress.subdistrict} อ.{patient.currentAddress.district} จ.{patient.currentAddress.province}
+              <span className="font-bold">ที่อยู่:</span> เลขที่ {patient.currentAddress?.houseNo || '-'} ต.{patient.currentAddress?.subdistrict || '-'} อ.{patient.currentAddress?.district || '-'} จ.{patient.currentAddress?.province || '-'}
             </div>
 
             {/* Photos Grid: Patient & House/Wound */}
@@ -1142,6 +1149,7 @@ export const PrintFormSK04: React.FC<PrintFormSK04Props> = ({ patient, onClose }
           </div>
         </div>
 
+        </div>
       </div>
     </div>,
     document.body

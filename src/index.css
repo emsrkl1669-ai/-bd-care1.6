@@ -1,11 +1,32 @@
 @import "tailwindcss";
 
 @layer base {
+  html, body, #root {
+    width: 100%;
+    min-height: 100dvh;
+    margin: 0;
+  }
+
   body {
     font-family: 'Prompt', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     color: #1e293b;
     background-color: #f8fafc;
+    -webkit-tap-highlight-color: transparent;
   }
+}
+
+@media screen {
+  html, body {
+    overflow-x: clip;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Print specific styles for แบบ สค.04 (3 pages) and House Labels */
@@ -68,11 +89,14 @@
     box-shadow: none !important;
   }
 
-  /* Reset container transform so CSS page breaks work properly */
+  /* Reset container transform & margins so CSS page breaks work properly */
   .a4-container {
     transform: none !important;
     -webkit-transform: none !important;
     margin: 0 auto !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    margin-bottom: 0 !important;
     padding: 0 !important;
     width: 210mm !important;
     height: auto !important;

@@ -135,7 +135,7 @@ export const PatientList: React.FC<PatientListProps> = ({
         (p.caregiverName && p.caregiverName.toLowerCase().includes(term));
 
       const matchDistrict =
-        selectedDistrict === 'all' || p.currentAddress.district === selectedDistrict;
+        selectedDistrict === 'all' || p.currentAddress?.district === selectedDistrict;
 
       const matchMobility =
         selectedMobility === 'all' || p.mobilityLevel === selectedMobility;
@@ -179,12 +179,12 @@ export const PatientList: React.FC<PatientListProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto py-3 px-3 sm:px-4">
+    <div className="w-full py-3 px-2.5 sm:px-4 lg:px-6">
       {/* Compact Search & Filter Toolbar */}
-      <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs mb-3 space-y-2.5">
+      <div className="bg-white rounded-xl border border-slate-200 p-2.5 sm:p-3 shadow-xs mb-3 space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           {/* Status Tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-semibold overflow-x-auto no-scrollbar max-w-full">
             <button
               onClick={() => setStatusTab('active')}
               className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
@@ -437,10 +437,10 @@ export const PatientList: React.FC<PatientListProps> = ({
                       {/* Address */}
                       <td className="py-2 px-3 align-top max-w-xs">
                         <div className="font-medium text-slate-800 line-clamp-1">
-                          ต.{patient.currentAddress.subdistrict} อ.{patient.currentAddress.district}
+                          ต.{patient.currentAddress?.subdistrict || '-'} อ.{patient.currentAddress?.district || '-'}
                         </div>
                         <div className="text-[11px] text-slate-500 line-clamp-1">
-                          เลขที่ {patient.currentAddress.houseNo} {patient.currentAddress.soi && `ซ.${patient.currentAddress.soi}`}
+                          เลขที่ {patient.currentAddress?.houseNo || '-'} {patient.currentAddress?.soi && `ซ.${patient.currentAddress.soi}`}
                         </div>
                       </td>
 
@@ -535,7 +535,7 @@ export const PatientList: React.FC<PatientListProps> = ({
           {/* ============================================================== */}
           {/* CARD VIEW: Always shown on mobile (< md), or when selected     */}
           {/* ============================================================== */}
-          <div className={`${viewMode === 'table' ? 'md:hidden ' : ''}grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5`}>
+          <div className={`${viewMode === 'table' ? 'md:hidden ' : ''}grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-3.5`}>
             {filteredPatients.map((patient) => {
               const primaryPhoto = patient.photos?.[0]?.dataUrl;
               return (
@@ -610,7 +610,7 @@ export const PatientList: React.FC<PatientListProps> = ({
                       <div className="flex items-start gap-1 text-slate-600">
                         <MapPin className="w-3 h-3 text-blue-600 shrink-0 mt-0.5" />
                         <span className="line-clamp-1">
-                          เลขที่ {patient.currentAddress.houseNo} ต.{patient.currentAddress.subdistrict} อ.{patient.currentAddress.district}
+                          เลขที่ {patient.currentAddress?.houseNo || '-'} ต.{patient.currentAddress?.subdistrict || '-'} อ.{patient.currentAddress?.district || '-'}
                         </span>
                       </div>
 
@@ -769,8 +769,8 @@ export const PatientList: React.FC<PatientListProps> = ({
 
       {/* Archive Modal Dialog */}
       {archiveTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full p-4 sm:p-5 shadow-2xl my-auto">
             <h3 className="font-bold text-slate-900 text-base mb-1.5">
               🗄️ ย้ายประวัติผู้ป่วยเข้าคลังประวัติ (Archive)
             </h3>
@@ -901,16 +901,16 @@ export const PatientList: React.FC<PatientListProps> = ({
               header: 'ที่อยู่ / พื้นที่',
               colWidth: '23%',
               render: (p) => {
-                const soi = stripAddrPrefix(p.currentAddress.soi, ['ซอย', 'ซ.']);
-                const road = stripAddrPrefix(p.currentAddress.road, ['ถนน', 'ถ.']);
-                const subdistrict = stripAddrPrefix(p.currentAddress.subdistrict, ['ตำบล', 'ต.', 'แขวง']);
-                const district = stripAddrPrefix(p.currentAddress.district, ['อำเภอ', 'อ.', 'เขต']);
-                const province = stripAddrPrefix(p.currentAddress.province || 'สมุทรปราการ', ['จังหวัด', 'จ.']);
+                const soi = stripAddrPrefix(p.currentAddress?.soi, ['ซอย', 'ซ.']);
+                const road = stripAddrPrefix(p.currentAddress?.road, ['ถนน', 'ถ.']);
+                const subdistrict = stripAddrPrefix(p.currentAddress?.subdistrict, ['ตำบล', 'ต.', 'แขวง']);
+                const district = stripAddrPrefix(p.currentAddress?.district, ['อำเภอ', 'อ.', 'เขต']);
+                const province = stripAddrPrefix(p.currentAddress?.province || 'สมุทรปราการ', ['จังหวัด', 'จ.']);
                 return (
                   <div className="text-[9.5px] text-slate-800 leading-snug">
                     <div>
-                      เลขที่ {p.currentAddress.houseNo}
-                      {p.currentAddress.buildingVillage ? ` (${p.currentAddress.buildingVillage})` : ''}
+                      เลขที่ {p.currentAddress?.houseNo || '-'}
+                      {p.currentAddress?.buildingVillage ? ` (${p.currentAddress.buildingVillage})` : ''}
                       {soi ? ` ซ.${soi}` : ''}
                       {road ? ` ถ.${road}` : ''}
                     </div>

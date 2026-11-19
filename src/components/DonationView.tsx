@@ -118,15 +118,15 @@ export const DonationView: React.FC<DonationViewProps> = ({
 
 
   return (
-    <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-4">
+    <div className="w-full px-2.5 sm:px-4 lg:px-6 py-4 sm:py-6 space-y-4">
       {/* Top Banner / Hero */}
-      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 rounded-2xl p-4 sm:p-6 text-white shadow-lg flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1">
+      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 rounded-2xl p-4 sm:p-6 text-white shadow-lg flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+        <div className="space-y-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-400/30">
+            <span className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-400/30 shrink-0">
               <Gift className="w-5 h-5 sm:w-6 sm:h-6" />
             </span>
-            <h2 className="text-lg sm:text-xl font-black tracking-tight">
+            <h2 className="text-base sm:text-xl font-black tracking-tight">
               ระบบบริจาคสิ่งของสงเคราะห์ (ประชาชนทั่วไป & หน่วยงานราชการ)
             </h2>
           </div>
@@ -135,7 +135,7 @@ export const DonationView: React.FC<DonationViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           {donations.length > 0 && (
             <>
               <button
@@ -163,7 +163,7 @@ export const DonationView: React.FC<DonationViewProps> = ({
               setEditingRecord(null);
               setIsFormOpen(true);
             }}
-            className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 sm:px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>+ บันทึกการบริจาคสิ่งของ</span>
@@ -268,7 +268,7 @@ export const DonationView: React.FC<DonationViewProps> = ({
       <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2.5">
           {/* Search bar */}
-          <div className="relative flex-1 min-w-[240px]">
+          <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[240px]">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -280,7 +280,7 @@ export const DonationView: React.FC<DonationViewProps> = ({
           </div>
 
           {/* Filter Pills */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold overflow-x-auto">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold overflow-x-auto no-scrollbar max-w-full">
             {[
               { id: 'all', label: 'ทั้งหมด' },
               { id: 'individual', label: `ประชาชนทั่วไป (${individualCount})` },

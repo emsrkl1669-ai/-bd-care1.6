@@ -215,10 +215,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-4 bg-slate-900/70 backdrop-blur-xs overflow-y-auto">
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col my-auto">
         {/* Header */}
-        <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
+        <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-600/30 border border-blue-400/40 flex items-center justify-center">
               <ShieldCheck className="w-6 h-6 text-blue-400" />
@@ -240,7 +240,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </button>
         </div>
 
-        <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+        <div className="p-4 sm:p-5 space-y-4 max-h-[82dvh] overflow-y-auto">
           {/* Firebase Cloud Sync Card */}
           <div className="p-3.5 rounded-xl border border-blue-200 bg-blue-50/70 space-y-2.5">
             <div className="flex items-center justify-between">

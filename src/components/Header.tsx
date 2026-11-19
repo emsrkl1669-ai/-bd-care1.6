@@ -13,7 +13,6 @@ import {
   WifiOff,
   ChevronDown,
   HeartHandshake,
-  Trash2,
   Lock,
   Key,
   Gift,
@@ -54,7 +53,6 @@ interface HeaderProps {
     importedFunerals?: FuneralAssistanceRecord[],
     importedDonations?: DonationDistributionRecord[]
   ) => void;
-  onClearAll?: () => void;
   isOnline: boolean;
   firebaseUser?: User | null;
   cloudStatus?: 'disconnected' | 'syncing' | 'synced' | 'error';
@@ -84,7 +82,6 @@ export const Header: React.FC<HeaderProps> = ({
   funerals = [],
   donations = [],
   onImportBackup,
-  onClearAll,
   isOnline,
   firebaseUser = null,
   cloudStatus = 'disconnected',
@@ -168,38 +165,38 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="no-print bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2.5">
+    <header className="no-print w-full bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
+      <div className="w-full px-2.5 sm:px-4 lg:px-6 py-1.5 sm:py-2 flex flex-wrap items-center justify-between gap-2">
         {/* Brand & Logo */}
         <div
           onClick={() => setCurrentTab('list')}
-          className="flex items-center gap-2.5 cursor-pointer group shrink-0"
+          className="flex items-center gap-2 sm:gap-2.5 cursor-pointer group shrink-0 min-w-0"
         >
           <img
             src="/assets/aistudio/382492-Photoroom_4c9e02f3.png"
             alt="ตรามูลนิธิร่วมกุศลสมุทรปราการ"
-            className="w-9 h-9 object-contain drop-shadow-xs group-hover:scale-105 transition-transform"
+            className="w-8 h-8 sm:w-9 sm:h-9 object-contain drop-shadow-xs group-hover:scale-105 transition-transform shrink-0"
           />
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="text-base font-extrabold tracking-tight text-slate-900">
+              <span className="text-sm sm:text-base font-extrabold tracking-tight text-slate-900">
                 BD-Care
               </span>
-              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-100 text-blue-800">
+              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 shrink-0">
                 สค.04
               </span>
-              <span className="hidden xl:inline text-[11px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.2 rounded border border-red-200">
+              <span className="hidden 2xl:inline text-[11px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.2 rounded border border-red-200 shrink-0">
                 北欖天德善堂
               </span>
             </div>
-            <p className="text-[10.5px] text-slate-500 font-medium leading-none hidden sm:block">
+            <p className="text-[10.5px] text-slate-500 font-medium leading-none hidden sm:block truncate max-w-[260px] md:max-w-xs xl:max-w-none">
               โครงการใจถึงใจช่วยผู้ป่วยติดเตียงและยากไร้ มูลนิธิร่วมกุศลสมุทรปราการ
             </p>
           </div>
         </div>
 
         {/* Navigation Tabs */}
-        <nav className="order-3 w-full lg:order-none lg:w-auto flex items-center gap-1 overflow-x-auto py-0.5 border-t border-slate-100 pt-1.5 lg:border-t-0 lg:pt-0.5">
+        <nav className="order-3 w-full xl:order-none xl:w-auto flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 border-t border-slate-100 pt-1.5 xl:border-t-0 xl:pt-0.5">
           <button
             onClick={() => setCurrentTab('list')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
@@ -391,21 +388,21 @@ export const Header: React.FC<HeaderProps> = ({
               className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer border border-slate-200 text-slate-800"
               title="บัญชีผู้ใช้งานปัจจุบัน • คลิกเพื่อเข้าสู่ระบบบัญชีอื่นหรือจัดการสิทธิ์"
             >
-              <div className={`w-2 h-2 rounded-full ${currentAdmin.avatarColor}`} />
+              <div className={`w-2 h-2 rounded-full shrink-0 ${currentAdmin.avatarColor}`} />
               <div className="flex flex-col text-left">
-                <span className="font-bold text-[11.5px] max-w-[120px] sm:max-w-none truncate leading-tight">
+                <span className="font-bold text-[11px] sm:text-[11.5px] max-w-[84px] sm:max-w-[140px] lg:max-w-none truncate leading-tight">
                   {currentAdmin.name}
                 </span>
-                <span className="text-[10px] text-blue-700 font-medium leading-none">
+                <span className="text-[9.5px] sm:text-[10px] text-blue-700 font-medium leading-none max-w-[84px] sm:max-w-none truncate">
                   @{currentAdmin.username} • {currentAdmin.roleTitle.replace('(Admin)', '').trim()}
                 </span>
               </div>
-              <ChevronDown className="w-3 h-3 text-slate-500 ml-0.5" />
+              <ChevronDown className="w-3 h-3 text-slate-500 ml-0.5 shrink-0" />
             </button>
 
             {isAdminDropdownOpen && (
               <div
-                className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-50 text-slate-800"
+                className="absolute right-0 mt-2 w-[min(18rem,calc(100vw-1.5rem))] bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-50 text-slate-800"
               >
                 <div className="px-3.5 py-2 border-b border-slate-100 bg-slate-50">
                   <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
@@ -468,7 +465,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             {isBackupMenuOpen && (
               <div
-                className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-slate-700"
+                className="absolute right-0 mt-2 w-[min(16.5rem,calc(100vw-1.5rem))] bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-slate-700"
               >
                 {firebaseUser && onManualCloudSync && (
                   <>
@@ -579,25 +576,6 @@ export const Header: React.FC<HeaderProps> = ({
                     <div className="text-[10px] text-slate-500">อัปโหลดขึ้น Cloud Database อัตโนมัติ</div>
                   </div>
                 </button>
-
-                {onClearAll && (
-                  <>
-                    <div className="border-t border-slate-100 my-1" />
-                    <button
-                      onClick={() => {
-                        setIsBackupMenuOpen(false);
-                        onClearAll();
-                      }}
-                      className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 hover:text-red-700 text-red-600 flex items-center gap-2 cursor-pointer font-medium"
-                    >
-                      <Trash2 className="w-4 h-4 text-red-500" />
-                      <div>
-                        <div>ล้างข้อมูลในเบราว์เซอร์</div>
-                        <div className="text-[10px] text-red-400">ล้างแคชในเครื่องนี้</div>
-                      </div>
-                    </button>
-                  </>
-                )}
               </div>
             )}
             <input

@@ -47,12 +47,22 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
     };
   }, []);
 
+  const computeFitScale = () => {
+    const sheetWidth = 794;
+    const sheetHeight = 1123;
+    const isMobile = window.innerWidth < 1024;
+    const horizPad = window.innerWidth < 640 ? 16 : 48;
+    const vertPad = window.innerWidth < 640 ? 190 : 165;
+    const fitW = (window.innerWidth - horizPad) / sheetWidth;
+    const fitH = (window.innerHeight - vertPad) / sheetHeight;
+    const fit = isMobile ? fitW : Math.min(fitW, fitH);
+    return parseFloat(Math.min(1, Math.max(0.28, fit)).toFixed(2));
+  };
+
   // Auto-fit scale on viewport resize
   useEffect(() => {
     const updateFitScale = () => {
-      const availableHeight = window.innerHeight - 150;
-      const fit = Math.min(1, Math.max(0.4, availableHeight / 1150));
-      setScale(parseFloat(fit.toFixed(2)));
+      setScale(computeFitScale());
     };
 
     updateFitScale();
@@ -115,11 +125,11 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
     const estimateRowHeight = (p: PatientRecord): number => {
       let h = 44;
       const addrLen =
-        (p.currentAddress.houseNo || '').length +
-        (p.currentAddress.buildingVillage || '').length +
-        (p.currentAddress.road || '').length +
-        (p.currentAddress.subdistrict || '').length +
-        (p.currentAddress.district || '').length;
+        (p.currentAddress?.houseNo || '').length +
+        (p.currentAddress?.buildingVillage || '').length +
+        (p.currentAddress?.road || '').length +
+        (p.currentAddress?.subdistrict || '').length +
+        (p.currentAddress?.district || '').length;
       if (addrLen > 68) h += 11;
       if (p.landmarkNote) {
         h += p.landmarkNote.length > 42 ? 20 : 11;
@@ -236,12 +246,12 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Zoom Controls */}
-            <div className="hidden sm:flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
               <button
-                onClick={() => setScale((s) => Math.max(0.4, parseFloat((s - 0.05).toFixed(2))))}
-                className="p-1 hover:bg-white rounded text-slate-600 hover:text-slate-900 transition"
+                onClick={() => setScale((s) => Math.max(0.28, parseFloat((s - 0.05).toFixed(2))))}
+                className="p-1 hover:bg-white rounded text-slate-600 hover:text-slate-900 transition cursor-pointer"
                 title="ย่อขนาด"
               >
                 <ZoomOut className="w-4 h-4" />
@@ -251,14 +261,14 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
               </span>
               <button
                 onClick={() => setScale((s) => Math.min(1.2, parseFloat((s + 0.05).toFixed(2))))}
-                className="p-1 hover:bg-white rounded text-slate-600 hover:text-slate-900 transition"
+                className="p-1 hover:bg-white rounded text-slate-600 hover:text-slate-900 transition cursor-pointer"
                 title="ขยายขนาด"
               >
                 <ZoomIn className="w-4 h-4" />
               </button>
               <button
-                onClick={() => setScale(0.75)}
-                className="p-1 hover:bg-white rounded text-slate-600 hover:text-slate-900 transition"
+                onClick={() => setScale(computeFitScale())}
+                className="p-1 hover:bg-white rounded text-slate-600 hover:text-slate-900 transition cursor-pointer"
                 title="ขนาดพอดี"
               >
                 <Minimize2 className="w-3.5 h-3.5" />
@@ -286,7 +296,7 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
 
         {/* Page Switcher Tabs */}
         {totalPages > 1 && (
-          <div className="flex items-center gap-1.5 pt-2.5 overflow-x-auto text-xs">
+          <div className="flex items-center gap-1.5 pt-2.5 overflow-x-auto no-scrollbar text-xs">
             <span className="text-slate-500 font-medium shrink-0 mr-1">เลือกดูหน้า:</span>
             <button
               onClick={() => setActiveTab('all')}
@@ -316,14 +326,17 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
       </div>
 
       {/* Printable A4 Container */}
-      <div
-        className="a4-container transition-transform duration-150 origin-top flex flex-col items-center gap-6 pb-10"
-        style={{
-          transform: `scale(${scale})`,
-          transformOrigin: 'top center',
-          marginBottom: scale < 1 ? `-${Math.round((1 - scale) * (totalPages * 1140))}px` : undefined,
-        }}
-      >
+      <div className="w-full overflow-x-auto flex print:block print:overflow-visible">
+        <div
+          className="a4-container w-fit mx-auto transition-transform duration-150 origin-top flex flex-col items-center gap-6 pb-10"
+          style={{
+            transform: `scale(${scale})`,
+            transformOrigin: 'top center',
+            marginLeft: scale < 1 ? `-${Math.round(((1 - scale) * 794) / 2)}px` : undefined,
+            marginRight: scale < 1 ? `-${Math.round(((1 - scale) * 794) / 2)}px` : undefined,
+            marginBottom: scale < 1 ? `-${Math.round((1 - scale) * ((activeTab === 'all' ? totalPages : 1) * 1140))}px` : undefined,
+          }}
+        >
         {pages.map((pagePatients, pageIdx) => {
           // If viewing a specific tab and it's not this page, hide on screen (visible in print via CSS)
           const isHiddenOnScreen = activeTab !== 'all' && activeTab !== pageIdx;
@@ -475,10 +488,10 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
                               {/* Address, Landmark & Contact */}
                               <td className="py-[3px] px-1.5 border-r border-slate-300 break-words">
                                 <div className="font-medium text-slate-800 text-[9px] leading-tight">
-                                  เลขที่ {patient.currentAddress.houseNo}
-                                  {patient.currentAddress.buildingVillage && ` ${patient.currentAddress.buildingVillage}`}
-                                  {patient.currentAddress.road && ` ถ.${patient.currentAddress.road}`}
-                                  {` ต.${patient.currentAddress.subdistrict} อ.${patient.currentAddress.district}`}
+                                  เลขที่ {patient.currentAddress?.houseNo || '-'}
+                                  {patient.currentAddress?.buildingVillage && ` ${patient.currentAddress.buildingVillage}`}
+                                  {patient.currentAddress?.road && ` ถ.${patient.currentAddress.road}`}
+                                  {` ต.${patient.currentAddress?.subdistrict || '-'} อ.${patient.currentAddress?.district || '-'}`}
                                 </div>
                                 {patient.landmarkNote && (
                                   <div className="text-[8.5px] text-amber-900 italic leading-tight mt-0.5">
@@ -593,6 +606,7 @@ export const PrintDeliveryPlanModal: React.FC<PrintDeliveryPlanModalProps> = ({
             </div>
           );
         })}
+        </div>
       </div>
     </div>,
     document.body

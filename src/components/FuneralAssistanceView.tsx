@@ -118,19 +118,19 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto py-3 px-3 sm:px-4 space-y-4">
+    <div className="w-full py-3 px-2.5 sm:px-4 lg:px-6 space-y-4">
       {/* Page Title & Top Actions */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
-            <HeartHandshake className="w-7 h-7 text-amber-600" />
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
+            <HeartHandshake className="w-6 h-6 sm:w-7 sm:h-7 text-amber-600" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base sm:text-xl font-black text-slate-900 tracking-tight">
                 การช่วยอนุเคราะห์เผาศพ / ฌาปนกิจสงเคราะห์
               </h2>
-              <span className="text-xs bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-md">
+              <span className="text-[11px] sm:text-xs bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-md">
                 มูลนิธิร่วมกุศลสมุทรปราการ
               </span>
             </div>
@@ -140,7 +140,7 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <button
             onClick={() => setIsPrintingRoster(true)}
             disabled={filteredRecords.length === 0}
@@ -166,7 +166,7 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
               setEditingRecord(null);
               setIsFormOpen(true);
             }}
-            className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 sm:px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>+ ยื่นคำร้องอนุเคราะห์เผาศพ</span>
@@ -218,7 +218,7 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
       <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2.5">
           {/* Search bar */}
-          <div className="relative flex-1 min-w-[240px]">
+          <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[240px]">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -230,7 +230,7 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
           </div>
 
           {/* Status Tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold overflow-x-auto no-scrollbar max-w-full">
             {[
               { id: 'all', label: 'ทั้งหมด' },
               { id: 'pending', label: 'รอพิจารณา' },
@@ -240,7 +240,7 @@ export const FuneralAssistanceView: React.FC<FuneralAssistanceViewProps> = ({
               <button
                 key={tab.id}
                 onClick={() => setStatusFilter(tab.id as any)}
-                className={`px-3 py-1 rounded-md transition cursor-pointer ${
+                className={`px-3 py-1 rounded-md transition cursor-pointer whitespace-nowrap ${
                   statusFilter === tab.id
                     ? 'bg-white text-slate-900 shadow-2xs font-bold'
                     : 'text-slate-600 hover:text-slate-900'

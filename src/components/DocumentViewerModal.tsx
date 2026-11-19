@@ -34,10 +34,10 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4">
-      <div className="bg-white rounded-2xl overflow-hidden max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-2 sm:p-4">
+      <div className="bg-white rounded-2xl overflow-hidden max-w-5xl w-full max-h-[92dvh] flex flex-col shadow-2xl">
         {/* Header */}
-        <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
+        <div className="px-4 sm:px-5 py-3 sm:py-3.5 bg-slate-900 text-white flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
             {isPdf ? (
               <FileText className="w-5 h-5 text-red-400 shrink-0" />
@@ -46,13 +46,13 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
             )}
             <div className="min-w-0">
               <h3 className="font-semibold text-sm truncate">{document.title || document.fileName}</h3>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-400 truncate">
                 {document.fileName} • {document.uploadDate}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {document.dataUrl && (
               <button
                 type="button"
@@ -74,13 +74,13 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
         </div>
 
         {/* Viewer Content */}
-        <div className="flex-1 bg-slate-100 overflow-auto flex items-center justify-center p-4 min-h-[400px]">
+        <div className="flex-1 bg-slate-100 overflow-auto flex items-center justify-center p-2.5 sm:p-4 min-h-[260px] sm:min-h-[400px]">
           {isImage ? (
             document.dataUrl ? (
               <img
                 src={document.dataUrl}
                 alt={document.title}
-                className="max-h-[75vh] max-w-full object-contain rounded-lg shadow-md bg-white"
+                className="max-h-[75dvh] max-w-full object-contain rounded-lg shadow-md bg-white"
               />
             ) : (
               <div className="text-center p-8 text-slate-500">

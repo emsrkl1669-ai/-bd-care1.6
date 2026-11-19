@@ -8,6 +8,11 @@ import {
 } from '../types';
 import { generateQrCodeDataUrl, makeGoogleMapsUrl } from './qrcode';
 import { formatThaiMonthYear, sortPatientsByCodeAsc } from './idCard';
+import {
+  normalizeDonationRecord,
+  normalizeFuneralRecord,
+  normalizePatientRecord,
+} from './normalizers';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const STORAGE_KEY = 'bdcare_patients_v1';
@@ -38,7 +43,10 @@ export function getStoredPatients(): PatientRecord[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return sortPatientsByCodeAsc(parsed);
+    const normalized = parsed
+      .filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+      .map((item) => normalizePatientRecord(item));
+    return sortPatientsByCodeAsc(normalized);
   } catch (err) {
     console.error('Failed to load patients from localStorage:', err);
     return [];
@@ -51,7 +59,10 @@ export function getRecoveryPatients(): PatientRecord[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return sortPatientsByCodeAsc(parsed);
+    const normalized = parsed
+      .filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+      .map((item) => normalizePatientRecord(item));
+    return sortPatientsByCodeAsc(normalized);
   } catch {
     return [];
   }
@@ -67,6 +78,7 @@ export function saveStoredPatients(patients: PatientRecord[]): void {
       try {
         const compact = sorted.map((p) => ({
           ...p,
+          _compactStrippedMedia: true,
           photos: [],
           documents: [],
           deliveries: (p.deliveries || []).map((d) => ({ ...d, photoUrl: undefined })),
@@ -86,25 +98,8 @@ export function saveStoredPatients(patients: PatientRecord[]): void {
 }
 
 export function saveExactStoredPatients(patients: PatientRecord[]): void {
+  // Never delete recovery backup even if synced state is temporarily empty
   saveStoredPatients(patients);
-  if (patients.length === 0) {
-    try {
-      localStorage.removeItem(RECOVERY_PATIENTS_KEY);
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-export function clearAllStoredPatients(includeRecovery: boolean = false): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
-    if (includeRecovery) {
-      localStorage.removeItem(RECOVERY_PATIENTS_KEY);
-    }
-  } catch (err) {
-    console.error('Failed to clear patients in localStorage:', err);
-  }
 }
 
 export function getStoredAdminId(): string {
@@ -170,21 +165,21 @@ export function exportToCsv(patients: PatientRecord[]): void {
     `'${p.phone}`,
     p.caregiverName,
     `'${p.caregiverPhone}`,
-    p.currentAddress.houseNo,
-    p.currentAddress.buildingVillage || '-',
-    p.currentAddress.soi || '-',
-    p.currentAddress.road || '-',
-    p.currentAddress.subdistrict,
-    p.currentAddress.district,
-    p.currentAddress.province,
+    p.currentAddress?.houseNo || '',
+    p.currentAddress?.buildingVillage || '-',
+    p.currentAddress?.soi || '-',
+    p.currentAddress?.road || '-',
+    p.currentAddress?.subdistrict || '',
+    p.currentAddress?.district || '',
+    p.currentAddress?.province || '',
     p.latitude || '',
     p.longitude || '',
     `"${(p.googleMapsUrl || '').replace(/"/g, '""')}"`,
     p.mobilityLevel === 'bedridden' ? 'ติดเตียง 100%' : p.mobilityLevel === 'semi_bedridden' ? 'กึ่งติดเตียง' : 'พอเดินได้',
     `"${(p.chronicDiseases || '').replace(/"/g, '""')}"`,
     `"${(p.symptomsDetail || '').replace(/"/g, '""')}"`,
-    p.disabilityCard.hasCard ? 'มี' : 'ไม่มี',
-    `"${p.disabilityCard.type || '-'}"`,
+    p.disabilityCard?.hasCard ? 'มี' : 'ไม่มี',
+    `"${p.disabilityCard?.type || '-'}"`,
     p.netIncome,
     p.helpCashEnabled ? p.helpCashAmount : 0,
     p.helpDiaperSize,
@@ -323,7 +318,10 @@ export function getStoredFunerals(): FuneralAssistanceRecord[] {
     const raw = localStorage.getItem(FUNERAL_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+      .map((item) => normalizeFuneralRecord(item));
   } catch (err) {
     console.error('Failed to load funerals from localStorage:', err);
     return [];
@@ -335,7 +333,10 @@ export function getRecoveryFunerals(): FuneralAssistanceRecord[] {
     const raw = localStorage.getItem(RECOVERY_FUNERALS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+      .map((item) => normalizeFuneralRecord(item));
   } catch {
     return [];
   }
@@ -348,7 +349,11 @@ export function saveStoredFunerals(records: FuneralAssistanceRecord[]): void {
     } catch (err) {
       console.warn(`localStorage quota exceeded when saving ${key}, retrying without embedded files:`, err);
       try {
-        const compact = records.map((r) => ({ ...r, documents: [] }));
+        const compact = records.map((r) => ({
+          ...r,
+          _compactStrippedMedia: true,
+          documents: [],
+        }));
         localStorage.setItem(key, JSON.stringify(compact));
       } catch (innerErr) {
         console.error(`Failed to save compact funerals to ${key}:`, innerErr);
@@ -363,24 +368,6 @@ export function saveStoredFunerals(records: FuneralAssistanceRecord[]): void {
 
 export function saveExactStoredFunerals(records: FuneralAssistanceRecord[]): void {
   saveStoredFunerals(records);
-  if (records.length === 0) {
-    try {
-      localStorage.removeItem(RECOVERY_FUNERALS_KEY);
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-export function clearAllStoredFunerals(includeRecovery: boolean = false): void {
-  try {
-    localStorage.setItem(FUNERAL_STORAGE_KEY, JSON.stringify([]));
-    if (includeRecovery) {
-      localStorage.removeItem(RECOVERY_FUNERALS_KEY);
-    }
-  } catch (err) {
-    console.error('Failed to clear funerals in localStorage:', err);
-  }
 }
 
 export function generateFuneralCode(existingCount: number): string {
@@ -468,7 +455,9 @@ export function getStoredDonations(): DonationDistributionRecord[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed;
+    return parsed
+      .filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+      .map((item) => normalizeDonationRecord(item));
   } catch (err) {
     console.error('Failed to load donations from localStorage:', err);
     return [];
@@ -480,7 +469,10 @@ export function getRecoveryDonations(): DonationDistributionRecord[] {
     const raw = localStorage.getItem(RECOVERY_DONATIONS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object'))
+      .map((item) => normalizeDonationRecord(item));
   } catch {
     return [];
   }
@@ -493,7 +485,12 @@ export function saveStoredDonations(donations: DonationDistributionRecord[]): vo
     } catch (err) {
       console.warn(`localStorage quota exceeded when saving ${key}, retrying without embedded media:`, err);
       try {
-        const compact = donations.map((d) => ({ ...d, photos: [], documents: [] }));
+        const compact = donations.map((d) => ({
+          ...d,
+          _compactStrippedMedia: true,
+          photos: [],
+          documents: [],
+        }));
         localStorage.setItem(key, JSON.stringify(compact));
       } catch (innerErr) {
         console.error(`Failed to save compact donations to ${key}:`, innerErr);
@@ -508,24 +505,6 @@ export function saveStoredDonations(donations: DonationDistributionRecord[]): vo
 
 export function saveExactStoredDonations(donations: DonationDistributionRecord[]): void {
   saveStoredDonations(donations);
-  if (donations.length === 0) {
-    try {
-      localStorage.removeItem(RECOVERY_DONATIONS_KEY);
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-export function clearAllStoredDonations(includeRecovery: boolean = false): void {
-  try {
-    localStorage.setItem(DONATION_STORAGE_KEY, JSON.stringify([]));
-    if (includeRecovery) {
-      localStorage.removeItem(RECOVERY_DONATIONS_KEY);
-    }
-  } catch (err) {
-    console.error('Failed to clear donations in localStorage:', err);
-  }
 }
 
 // Export Donations to CSV with UTF-8 BOM

@@ -197,9 +197,9 @@ export const FuneralFormModal: React.FC<FuneralFormModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/80 backdrop-blur-xs flex flex-col items-center p-2 sm:p-4">
-      <div className="w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col my-auto">
+      <div className="w-full max-w-5xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col my-auto">
         {/* Modal Header */}
-        <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between">
+        <div className="bg-slate-900 text-white p-3.5 sm:p-5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center">
               <HeartHandshake className="w-6 h-6 text-amber-400" />
@@ -227,7 +227,7 @@ export const FuneralFormModal: React.FC<FuneralFormModalProps> = ({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-4 sm:p-6 overflow-y-auto max-h-[75vh] space-y-6">
+        <form onSubmit={handleSubmit} className="p-3.5 sm:p-6 overflow-y-auto max-h-[80dvh] space-y-5 sm:space-y-6">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />

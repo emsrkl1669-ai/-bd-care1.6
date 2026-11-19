@@ -122,27 +122,27 @@ export const LiveCameraModal: React.FC<LiveCameraModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4">
-      <div className="bg-white rounded-2xl overflow-hidden max-w-lg w-full shadow-2xl flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-2.5 sm:p-4">
+      <div className="bg-white rounded-2xl overflow-hidden max-w-lg w-full shadow-2xl flex flex-col max-h-[92dvh]">
         {/* Header */}
-        <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Camera className="w-5 h-5 text-red-500" />
-            <h3 className="font-semibold text-base">กล้องถ่ายภาพอาการสด (Live Camera)</h3>
+        <div className="px-4 sm:px-5 py-3 sm:py-3.5 bg-slate-900 text-white flex items-center justify-between">
+          <div className="flex items-center gap-2 min-w-0">
+            <Camera className="w-5 h-5 text-red-500 shrink-0" />
+            <h3 className="font-semibold text-sm sm:text-base truncate">กล้องถ่ายภาพอาการสด (Live Camera)</h3>
           </div>
           <button
             onClick={() => {
               stopCamera();
               onClose();
             }}
-            className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+            className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Viewfinder / Preview */}
-        <div className="relative bg-black flex items-center justify-center min-h-[300px] overflow-hidden">
+        <div className="relative bg-black flex items-center justify-center min-h-[240px] sm:min-h-[300px] overflow-hidden">
           {errorMsg ? (
             <div className="p-6 text-center text-slate-300 max-w-xs">
               <AlertCircle className="w-10 h-10 text-amber-400 mx-auto mb-2" />
@@ -152,7 +152,7 @@ export const LiveCameraModal: React.FC<LiveCameraModalProps> = ({
             <img
               src={capturedDataUrl}
               alt="ภาพที่ถ่าย"
-              className="max-h-[380px] w-full object-contain"
+              className="max-h-[55dvh] sm:max-h-[380px] w-full object-contain"
             />
           ) : (
             <>
@@ -161,7 +161,7 @@ export const LiveCameraModal: React.FC<LiveCameraModalProps> = ({
                 autoPlay
                 playsInline
                 muted
-                className="max-h-[380px] w-full object-cover"
+                className="max-h-[55dvh] sm:max-h-[380px] w-full object-cover"
               />
               {/* Camera Switch button overlay */}
               <button

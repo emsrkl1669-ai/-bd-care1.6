@@ -57,6 +57,83 @@ import {
   setPendingDeliverySettings,
   saveStoredAuthorizedEmails,
 } from '../utils/storage';
+import {
+  safeNum,
+  safeCoord,
+  asMap,
+  normalizeDiaperSize,
+  normalizeWaterSize,
+  normalizeMobility,
+  normalizePatientStatus,
+  normalizePatientRecord,
+  normalizeFuneralRecord,
+  normalizeDonationRecord,
+  mergePatientRecordsForUpdate,
+  mergeFuneralRecordsForUpdate,
+  mergeDonationRecordsForUpdate,
+} from '../utils/normalizers';
+
+const PATIENT_CANONICAL_KEYS = new Set([
+  'id',
+  'ownerUid',
+  'authorizedEmails',
+  'code',
+  'status',
+  'fullName',
+  'mobilityLevel',
+  'profile',
+  'location',
+  'medical',
+  'householdEconomy',
+  'assistancePlan',
+  'assessment',
+  'createdAt',
+  'updatedAt',
+  'serverCreatedAt',
+  'serverUpdatedAt',
+]);
+
+const FUNERAL_CANONICAL_KEYS = new Set([
+  'id',
+  'ownerUid',
+  'authorizedEmails',
+  'code',
+  'applicationDate',
+  'status',
+  'statusNote',
+  'deceasedName',
+  'applicantName',
+  'deceasedInfo',
+  'applicantInfo',
+  'cremationAid',
+  'signatories',
+  'createdAt',
+  'updatedAt',
+  'serverCreatedAt',
+  'serverUpdatedAt',
+]);
+
+const DONATION_CANONICAL_KEYS = new Set([
+  'id',
+  'ownerUid',
+  'authorizedEmails',
+  'code',
+  'distributionDate',
+  'status',
+  'recipientType',
+  'recipientInfo',
+  'itemsSummary',
+  'handoverAndSignatories',
+  'createdAt',
+  'updatedAt',
+  'serverCreatedAt',
+  'serverUpdatedAt',
+]);
+
+function hasLegacyFlatKeys(data: Record<string, any> | null | undefined, canonicalKeys: Set<string>): boolean {
+  if (!data) return false;
+  return Object.keys(data).some((k) => !canonicalKeys.has(k));
+}
 
 async function getExistingServerDocData(
   ref: DocumentReference<DocumentData>
@@ -75,61 +152,9 @@ async function getExistingServerDocData(
   }
 }
 
-function safeNum(val: unknown, fallback: number = 0): number {
-  const n = Number(val);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function safeCoord(val: unknown): number | null {
-  if (val === null || val === undefined || val === '') return null;
-  const n = Number(val);
-  return Number.isFinite(n) ? n : null;
-}
-
 function asOptStr(val: unknown, maxLen: number): string | undefined {
   if (val === null || val === undefined) return undefined;
   return String(val).slice(0, maxLen);
-}
-
-function asMap(val: unknown): Record<string, any> | undefined {
-  if (!val || typeof val !== 'object' || Array.isArray(val)) return undefined;
-  return val as Record<string, any>;
-}
-
-function normalizeDiaperSize(val: unknown): 'S' | 'M' | 'L' | 'XL' | 'XXL' | 'NONE' {
-  const s = typeof val === 'string' ? val.toUpperCase().trim() : '';
-  if (s === 'S' || s === 'M' || s === 'L' || s === 'XL' || s === 'XXL' || s === 'NONE') {
-    return s;
-  }
-  return 'NONE';
-}
-
-function normalizeWaterSize(val: unknown): '1.5L' | '600ML' | 'NONE' {
-  const s = typeof val === 'string' ? val.toUpperCase().trim() : '';
-  if (s === '1.5L' || s === '600ML' || s === 'NONE') {
-    return s;
-  }
-  return '1.5L';
-}
-
-function normalizeMobility(val: unknown): 'bedridden' | 'semi_bedridden' | 'can_walk' {
-  if (val === 'bedridden' || val === 'semi_bedridden' || val === 'can_walk') return val;
-  return 'bedridden';
-}
-
-function normalizePatientStatus(
-  val: unknown
-): 'active' | 'pending' | 'deceased' | 'moved' | 'rejected' {
-  if (
-    val === 'active' ||
-    val === 'pending' ||
-    val === 'deceased' ||
-    val === 'moved' ||
-    val === 'rejected'
-  ) {
-    return val;
-  }
-  return 'active';
 }
 
 function emailsNeedBackfill(existingEmails: unknown, targetEmails: string[]): boolean {
@@ -164,6 +189,17 @@ export function normalizeAuthorizedEmails(
   return Array.from(set).slice(0, 50);
 }
 
+function isFirestoreTimestampValue(val: unknown): boolean {
+  if (!val || typeof val !== 'object') return false;
+  const obj = val as Record<string, any>;
+  if ('_methodName' in obj) return true;
+  return (
+    typeof obj.seconds === 'number' &&
+    typeof obj.nanoseconds === 'number' &&
+    typeof obj.toDate === 'function'
+  );
+}
+
 /**
  * Recursively strip undefined values from objects (preserving null only where explicitly set, e.g. lat/lng)
  */
@@ -178,7 +214,7 @@ function stripUndefined<T extends Record<string, any>>(obj: T): Record<string, a
           : item
       );
     } else if (v !== null && typeof v === 'object' && !(v instanceof Date)) {
-      // Preserve Firestore FieldValue sentinels (like serverTimestamp())
+      // Preserve Firestore FieldValue sentinels & Timestamps
       if ('_methodName' in v || 'isEqual' in v) {
         out[k] = v;
       } else {
@@ -340,93 +376,108 @@ function serializePatientParent(
     ownerUid,
     ...(authorizedEmails !== undefined ? { authorizedEmails } : {}),
     code: ((patient.code || '').trim() || `BDC-${id}`).slice(0, 40),
-    admissionDate: (patient.admissionDate || nowIso.slice(0, 10)).slice(0, 32),
     status: normalizePatientStatus(patient.status),
-    statusReason: asOptStr(patient.statusReason, 1000),
-    statusHistory: safeStatusHistory,
-    nationalId: (patient.nationalId || '').slice(0, 30),
-    title: (patient.title || '').slice(0, 30),
     fullName: ((patient.fullName || '').trim() || 'ไม่ระบุชื่อ').slice(0, 200),
-    birthDate: asOptStr(patient.birthDate, 32),
-    age: safeNum(patient.age, 0),
-    gender: patient.gender === 'หญิง' ? 'หญิง' : 'ชาย',
-    phone: (patient.phone || '').slice(0, 50),
-    caregiverName: (patient.caregiverName || '').slice(0, 200),
-    caregiverRelation: (patient.caregiverRelation || '').slice(0, 100),
-    caregiverPhone: (patient.caregiverPhone || '').slice(0, 50),
-    idAddress: asMap(patient.idAddress),
-    isSameAddress: Boolean(patient.isSameAddress),
-    currentAddress: asMap(patient.currentAddress),
-    latitude: safeCoord(patient.latitude),
-    longitude: safeCoord(patient.longitude),
-    ...(typeof patient.locationAccuracy === 'number' && Number.isFinite(patient.locationAccuracy)
-      ? { locationAccuracy: patient.locationAccuracy }
-      : {}),
-    landmarkNote: (patient.landmarkNote || '').slice(0, 1000),
-    googleMapsUrl: (patient.googleMapsUrl || '').slice(0, 500),
-    qrCodeDataUrl: qrRaw.length <= 40000 ? qrRaw : '',
     mobilityLevel: normalizeMobility(patient.mobilityLevel),
-    chronicDiseases: (patient.chronicDiseases || '').slice(0, 1000),
-    symptomsDetail: (patient.symptomsDetail || '').slice(0, 2000),
-    disabilityCard: asMap(patient.disabilityCard),
-    specialNeeds: safeSpecialNeeds,
-    familyMembersTotal: safeNum(patient.familyMembersTotal, 0),
-    familyMembersMale: safeNum(patient.familyMembersMale, 0),
-    familyMembersFemale: safeNum(patient.familyMembersFemale, 0),
-    incomeSalary: safeNum(patient.incomeSalary, 0),
-    incomeDisability: safeNum(patient.incomeDisability, 0),
-    incomeElderly: safeNum(patient.incomeElderly, 0),
-    incomeStateWelfare: safeNum(patient.incomeStateWelfare, 0),
-    incomeOther: safeNum(patient.incomeOther, 0),
-    expenseRentHouse:
-      patient.expenseRentHouse !== undefined && patient.expenseRentHouse !== null
-        ? safeNum(patient.expenseRentHouse, 0)
-        : undefined,
-    expenseRentLand:
-      patient.expenseRentLand !== undefined && patient.expenseRentLand !== null
-        ? safeNum(patient.expenseRentLand, 0)
-        : undefined,
-    expenseLiving:
-      patient.expenseLiving !== undefined && patient.expenseLiving !== null
-        ? safeNum(patient.expenseLiving, 0)
-        : undefined,
-    expenseMedicalTravel:
-      patient.expenseMedicalTravel !== undefined && patient.expenseMedicalTravel !== null
-        ? safeNum(patient.expenseMedicalTravel, 0)
-        : undefined,
-    expenseDebt:
-      patient.expenseDebt !== undefined && patient.expenseDebt !== null
-        ? safeNum(patient.expenseDebt, 0)
-        : undefined,
-    expenseOther:
-      patient.expenseOther !== undefined && patient.expenseOther !== null
-        ? safeNum(patient.expenseOther, 0)
-        : undefined,
-    monthlyExpense: safeNum(patient.monthlyExpense, 0),
-    netIncome: safeNum(patient.netIncome, 0),
-    economicNote: (patient.economicNote || '').slice(0, 1000),
-    helpCashEnabled: Boolean(patient.helpCashEnabled),
-    helpCashAmount: safeNum(patient.helpCashAmount, 0),
-    helpDiaperSize: normalizeDiaperSize(patient.helpDiaperSize),
-    helpDiaperPacks: safeNum(patient.helpDiaperPacks, 0),
-    helpRicePacks: safeNum(patient.helpRicePacks, 0),
-    helpWaterSize: normalizeWaterSize(patient.helpWaterSize),
-    helpWaterPacks: safeNum(patient.helpWaterPacks, 0),
-    helpOtherSupplies: (patient.helpOtherSupplies || '').slice(0, 500),
-    vulnerabilityScore: safeNum(patient.vulnerabilityScore, 0),
-    vulnerabilityLevel: (patient.vulnerabilityLevel || '').slice(0, 100),
-    dimensionScores: asMap(patient.dimensionScores),
-    socialWorkerOpinion: (patient.socialWorkerOpinion || '').slice(0, 3000),
-    aiSuggestions: (patient.aiSuggestions || '').slice(0, 3000),
-    interviewerName: (patient.interviewerName || '').slice(0, 200),
-    interviewerPosition: (patient.interviewerPosition || '').slice(0, 200),
-    approverName: (patient.approverName || '').slice(0, 200),
-    approverPosition: (patient.approverPosition || '').slice(0, 200),
-    presidentName: (patient.presidentName || '').slice(0, 200),
-    presidentPosition: (patient.presidentPosition || '').slice(0, 200),
+    profile: {
+      admissionDate: (patient.admissionDate || nowIso.slice(0, 10)).slice(0, 32),
+      statusReason: asOptStr(patient.statusReason, 1000),
+      statusHistory: safeStatusHistory,
+      nationalId: (patient.nationalId || '').slice(0, 30),
+      title: (patient.title || '').slice(0, 30),
+      birthDate: asOptStr(patient.birthDate, 32),
+      age: safeNum(patient.age, 0),
+      gender: patient.gender === 'หญิง' ? 'หญิง' : 'ชาย',
+      phone: (patient.phone || '').slice(0, 50),
+      caregiverName: (patient.caregiverName || '').slice(0, 200),
+      caregiverRelation: (patient.caregiverRelation || '').slice(0, 100),
+      caregiverPhone: (patient.caregiverPhone || '').slice(0, 50),
+    },
+    location: {
+      idAddress: asMap(patient.idAddress),
+      isSameAddress: Boolean(patient.isSameAddress),
+      currentAddress: asMap(patient.currentAddress),
+      latitude: safeCoord(patient.latitude),
+      longitude: safeCoord(patient.longitude),
+      ...(typeof patient.locationAccuracy === 'number' && Number.isFinite(patient.locationAccuracy)
+        ? { locationAccuracy: patient.locationAccuracy }
+        : {}),
+      landmarkNote: (patient.landmarkNote || '').slice(0, 1000),
+      googleMapsUrl: (patient.googleMapsUrl || '').slice(0, 500),
+      qrCodeDataUrl: qrRaw.length <= 40000 ? qrRaw : '',
+    },
+    medical: {
+      chronicDiseases: (patient.chronicDiseases || '').slice(0, 1000),
+      symptomsDetail: (patient.symptomsDetail || '').slice(0, 2000),
+      disabilityCard: asMap(patient.disabilityCard),
+      specialNeeds: safeSpecialNeeds,
+    },
+    householdEconomy: {
+      familyMembersTotal: safeNum(patient.familyMembersTotal, 0),
+      familyMembersMale: safeNum(patient.familyMembersMale, 0),
+      familyMembersFemale: safeNum(patient.familyMembersFemale, 0),
+      incomeSalary: safeNum(patient.incomeSalary, 0),
+      incomeDisability: safeNum(patient.incomeDisability, 0),
+      incomeElderly: safeNum(patient.incomeElderly, 0),
+      incomeStateWelfare: safeNum(patient.incomeStateWelfare, 0),
+      incomeOther: safeNum(patient.incomeOther, 0),
+      expenseRentHouse:
+        patient.expenseRentHouse !== undefined && patient.expenseRentHouse !== null
+          ? safeNum(patient.expenseRentHouse, 0)
+          : undefined,
+      expenseRentLand:
+        patient.expenseRentLand !== undefined && patient.expenseRentLand !== null
+          ? safeNum(patient.expenseRentLand, 0)
+          : undefined,
+      expenseLiving:
+        patient.expenseLiving !== undefined && patient.expenseLiving !== null
+          ? safeNum(patient.expenseLiving, 0)
+          : undefined,
+      expenseMedicalTravel:
+        patient.expenseMedicalTravel !== undefined && patient.expenseMedicalTravel !== null
+          ? safeNum(patient.expenseMedicalTravel, 0)
+          : undefined,
+      expenseDebt:
+        patient.expenseDebt !== undefined && patient.expenseDebt !== null
+          ? safeNum(patient.expenseDebt, 0)
+          : undefined,
+      expenseOther:
+        patient.expenseOther !== undefined && patient.expenseOther !== null
+          ? safeNum(patient.expenseOther, 0)
+          : undefined,
+      monthlyExpense: safeNum(patient.monthlyExpense, 0),
+      netIncome: safeNum(patient.netIncome, 0),
+      economicNote: (patient.economicNote || '').slice(0, 1000),
+    },
+    assistancePlan: {
+      helpCashEnabled: Boolean(patient.helpCashEnabled),
+      helpCashAmount: safeNum(patient.helpCashAmount, 0),
+      helpDiaperSize: normalizeDiaperSize(patient.helpDiaperSize),
+      helpDiaperPacks: safeNum(patient.helpDiaperPacks, 0),
+      helpRicePacks: safeNum(patient.helpRicePacks, 0),
+      helpWaterSize: normalizeWaterSize(patient.helpWaterSize),
+      helpWaterPacks: safeNum(patient.helpWaterPacks, 0),
+      helpOtherSupplies: (patient.helpOtherSupplies || '').slice(0, 500),
+    },
+    assessment: {
+      vulnerabilityScore: safeNum(patient.vulnerabilityScore, 0),
+      vulnerabilityLevel: (patient.vulnerabilityLevel || '').slice(0, 100),
+      dimensionScores: asMap(patient.dimensionScores),
+      socialWorkerOpinion: (patient.socialWorkerOpinion || '').slice(0, 3000),
+      aiSuggestions: (patient.aiSuggestions || '').slice(0, 3000),
+      interviewerName: (patient.interviewerName || '').slice(0, 200),
+      interviewerPosition: (patient.interviewerPosition || '').slice(0, 200),
+      approverName: (patient.approverName || '').slice(0, 200),
+      approverPosition: (patient.approverPosition || '').slice(0, 200),
+      presidentName: (patient.presidentName || '').slice(0, 200),
+      presidentPosition: (patient.presidentPosition || '').slice(0, 200),
+    },
     createdAt: ((patient.createdAt || '').trim() || nowIso).slice(0, 64),
     updatedAt: ((patient.updatedAt || '').trim() || nowIso).slice(0, 64),
-    serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
+    serverCreatedAt:
+      isUpdate && isFirestoreTimestampValue(existingServerCreatedAt)
+        ? existingServerCreatedAt
+        : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   };
 
@@ -475,7 +526,10 @@ async function serializeDeliveryDoc(
     officerName: (delivery.officerName || '').slice(0, 200),
     photoUrl: safePhotoUrl,
     notes: asOptStr(delivery.notes, 500),
-    serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
+    serverCreatedAt:
+      isUpdate && isFirestoreTimestampValue(existingServerCreatedAt)
+        ? existingServerCreatedAt
+        : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
 }
@@ -529,7 +583,10 @@ async function serializeMediaDoc(
     caption: asOptStr(media.caption, 500),
     timestamp: asOptStr(media.timestamp, 100),
     uploadDate: asOptStr(media.uploadDate, 64),
-    serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
+    serverCreatedAt:
+      isUpdate && isFirestoreTimestampValue(existingServerCreatedAt)
+        ? existingServerCreatedAt
+        : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
 }
@@ -559,40 +616,51 @@ function serializeFuneralParent(
     applicationDate: (record.applicationDate || nowIso.slice(0, 10)).slice(0, 32),
     status: safeStatus,
     statusNote: asOptStr(record.statusNote, 1000),
-    deceasedTitle: (record.deceasedTitle || '').slice(0, 30),
     deceasedName: ((record.deceasedName || '').trim() || 'ไม่ระบุชื่อ').slice(0, 200),
-    deceasedNationalId: (record.deceasedNationalId || '').slice(0, 30),
-    deceasedAge: safeNum(record.deceasedAge, 0),
-    deceasedDeathDate: (record.deceasedDeathDate || '').slice(0, 32),
-    deceasedDeathTime: (record.deceasedDeathTime || '').slice(0, 16),
-    causeOfDeath: (record.causeOfDeath || '').slice(0, 500),
-    deathPlace: (record.deathPlace || '').slice(0, 300),
-    deceasedAddress: (record.deceasedAddress || '').slice(0, 500),
-    applicantTitle: (record.applicantTitle || '').slice(0, 30),
     applicantName: ((record.applicantName || '').trim() || 'ไม่ระบุชื่อ').slice(0, 200),
-    applicantNationalId: (record.applicantNationalId || '').slice(0, 30),
-    applicantPhone: (record.applicantPhone || '').slice(0, 50),
-    applicantRelation: (record.applicantRelation || '').slice(0, 100),
-    applicantAddress: (record.applicantAddress || '').slice(0, 500),
-    applicantPovertyReason: (record.applicantPovertyReason || '').slice(0, 1000),
-    templeName: (record.templeName || '').slice(0, 300),
-    cremationDate: (record.cremationDate || '').slice(0, 32),
-    cremationTime: (record.cremationTime || '').slice(0, 16),
-    assistanceAmount: safeNum(record.assistanceAmount, 0),
-    coffinProvided: Boolean(record.coffinProvided),
-    transportProvided: Boolean(record.transportProvided),
-    shroudClothProvided: Boolean(record.shroudClothProvided),
-    otherItems: (record.otherItems || '').slice(0, 500),
-    officerId: (record.officerId || '').slice(0, 128),
-    officerName: (record.officerName || '').slice(0, 200),
-    officerPosition: (record.officerPosition || '').slice(0, 200),
-    approverId: asOptStr(record.approverId, 128),
-    approverName: (record.approverName || '').slice(0, 200),
-    approverPosition: (record.approverPosition || '').slice(0, 200),
-    approvalDate: asOptStr(record.approvalDate, 32),
+    deceasedInfo: {
+      deceasedTitle: (record.deceasedTitle || '').slice(0, 30),
+      deceasedNationalId: (record.deceasedNationalId || '').slice(0, 30),
+      deceasedAge: safeNum(record.deceasedAge, 0),
+      deceasedDeathDate: (record.deceasedDeathDate || '').slice(0, 32),
+      deceasedDeathTime: (record.deceasedDeathTime || '').slice(0, 16),
+      causeOfDeath: (record.causeOfDeath || '').slice(0, 500),
+      deathPlace: (record.deathPlace || '').slice(0, 300),
+      deceasedAddress: (record.deceasedAddress || '').slice(0, 500),
+    },
+    applicantInfo: {
+      applicantTitle: (record.applicantTitle || '').slice(0, 30),
+      applicantNationalId: (record.applicantNationalId || '').slice(0, 30),
+      applicantPhone: (record.applicantPhone || '').slice(0, 50),
+      applicantRelation: (record.applicantRelation || '').slice(0, 100),
+      applicantAddress: (record.applicantAddress || '').slice(0, 500),
+      applicantPovertyReason: (record.applicantPovertyReason || '').slice(0, 1000),
+    },
+    cremationAid: {
+      templeName: (record.templeName || '').slice(0, 300),
+      cremationDate: (record.cremationDate || '').slice(0, 32),
+      cremationTime: (record.cremationTime || '').slice(0, 16),
+      assistanceAmount: safeNum(record.assistanceAmount, 0),
+      coffinProvided: Boolean(record.coffinProvided),
+      transportProvided: Boolean(record.transportProvided),
+      shroudClothProvided: Boolean(record.shroudClothProvided),
+      otherItems: (record.otherItems || '').slice(0, 500),
+    },
+    signatories: {
+      officerId: (record.officerId || '').slice(0, 128),
+      officerName: (record.officerName || '').slice(0, 200),
+      officerPosition: (record.officerPosition || '').slice(0, 200),
+      approverId: asOptStr(record.approverId, 128),
+      approverName: (record.approverName || '').slice(0, 200),
+      approverPosition: (record.approverPosition || '').slice(0, 200),
+      approvalDate: asOptStr(record.approvalDate, 32),
+    },
     createdAt: ((record.createdAt || '').trim() || nowIso).slice(0, 64),
     updatedAt: ((record.updatedAt || '').trim() || nowIso).slice(0, 64),
-    serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
+    serverCreatedAt:
+      isUpdate && isFirestoreTimestampValue(existingServerCreatedAt)
+        ? existingServerCreatedAt
+        : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
 }
@@ -632,41 +700,50 @@ function serializeDonationParent(
     distributionDate: (record.distributionDate || nowIso.slice(0, 10)).slice(0, 32),
     status: safeStatus,
     recipientType: safeRecipientType,
-    individualTitle: (record.individualTitle || '').slice(0, 30),
-    individualName: (record.individualName || '').slice(0, 200),
-    individualNationalId: (record.individualNationalId || '').slice(0, 30),
-    individualPhone: (record.individualPhone || '').slice(0, 50),
-    individualAddress: (record.individualAddress || '').slice(0, 500),
-    individualCategory: (record.individualCategory || '').slice(0, 100),
-    individualNeedReason: (record.individualNeedReason || '').slice(0, 1000),
-    agencyName: (record.agencyName || '').slice(0, 300),
-    agencyType: (record.agencyType || '').slice(0, 120),
-    agencyContactPerson: (record.agencyContactPerson || '').slice(0, 200),
-    agencyContactPosition: (record.agencyContactPosition || '').slice(0, 200),
-    agencyPhone: (record.agencyPhone || '').slice(0, 50),
-    agencyAddress: (record.agencyAddress || '').slice(0, 500),
-    agencyRequestPurpose: (record.agencyRequestPurpose || '').slice(0, 1000),
-    officialLetterNo: (record.officialLetterNo || '').slice(0, 100),
-    waterPacks: safeNum(record.waterPacks, 0),
-    waterUnit: (record.waterUnit || 'แพ็ค').slice(0, 40),
-    dryFoodCount: safeNum(record.dryFoodCount, 0),
-    dryFoodUnit: (record.dryFoodUnit || 'ชุด').slice(0, 40),
-    riceBags: safeNum(record.riceBags, 0),
-    riceKg: safeNum(record.riceKg, 0),
-    diaperPacks: safeNum(record.diaperPacks, 0),
-    diaperSize: (record.diaperSize || '').slice(0, 40),
-    otherItems: safeOtherItems,
-    notes: (record.notes || '').slice(0, 1000),
-    handoverPlace: (record.handoverPlace || '').slice(0, 300),
-    deliveryMethod: (record.deliveryMethod || '').slice(0, 200),
-    officerId: (record.officerId || '').slice(0, 128),
-    officerName: (record.officerName || '').slice(0, 200),
-    officerPosition: (record.officerPosition || '').slice(0, 200),
-    approverName: (record.approverName || '').slice(0, 200),
-    approverPosition: (record.approverPosition || '').slice(0, 200),
+    recipientInfo: {
+      individualTitle: (record.individualTitle || '').slice(0, 30),
+      individualName: (record.individualName || '').slice(0, 200),
+      individualNationalId: (record.individualNationalId || '').slice(0, 30),
+      individualPhone: (record.individualPhone || '').slice(0, 50),
+      individualAddress: (record.individualAddress || '').slice(0, 500),
+      individualCategory: (record.individualCategory || '').slice(0, 100),
+      individualNeedReason: (record.individualNeedReason || '').slice(0, 1000),
+      agencyName: (record.agencyName || '').slice(0, 300),
+      agencyType: (record.agencyType || '').slice(0, 120),
+      agencyContactPerson: (record.agencyContactPerson || '').slice(0, 200),
+      agencyContactPosition: (record.agencyContactPosition || '').slice(0, 200),
+      agencyPhone: (record.agencyPhone || '').slice(0, 50),
+      agencyAddress: (record.agencyAddress || '').slice(0, 500),
+      agencyRequestPurpose: (record.agencyRequestPurpose || '').slice(0, 1000),
+      officialLetterNo: (record.officialLetterNo || '').slice(0, 100),
+    },
+    itemsSummary: {
+      waterPacks: safeNum(record.waterPacks, 0),
+      waterUnit: (record.waterUnit || 'แพ็ค').slice(0, 40),
+      dryFoodCount: safeNum(record.dryFoodCount, 0),
+      dryFoodUnit: (record.dryFoodUnit || 'ชุด').slice(0, 40),
+      riceBags: safeNum(record.riceBags, 0),
+      riceKg: safeNum(record.riceKg, 0),
+      diaperPacks: safeNum(record.diaperPacks, 0),
+      diaperSize: (record.diaperSize || '').slice(0, 40),
+      otherItems: safeOtherItems,
+      notes: (record.notes || '').slice(0, 1000),
+    },
+    handoverAndSignatories: {
+      handoverPlace: (record.handoverPlace || '').slice(0, 300),
+      deliveryMethod: (record.deliveryMethod || '').slice(0, 200),
+      officerId: (record.officerId || '').slice(0, 128),
+      officerName: (record.officerName || '').slice(0, 200),
+      officerPosition: (record.officerPosition || '').slice(0, 200),
+      approverName: (record.approverName || '').slice(0, 200),
+      approverPosition: (record.approverPosition || '').slice(0, 200),
+    },
     createdAt: ((record.createdAt || '').trim() || nowIso).slice(0, 64),
     updatedAt: ((record.updatedAt || '').trim() || nowIso).slice(0, 64),
-    serverCreatedAt: isUpdate && existingServerCreatedAt ? existingServerCreatedAt : serverTimestamp(),
+    serverCreatedAt:
+      isUpdate && isFirestoreTimestampValue(existingServerCreatedAt)
+        ? existingServerCreatedAt
+        : serverTimestamp(),
     serverUpdatedAt: serverTimestamp(),
   });
 }
@@ -682,7 +759,8 @@ async function syncMediaSubcollection(
   user: User,
   desiredAuthorizedEmails: string[],
   photos: Array<PatientPhoto | DonationPhoto>,
-  documents: Array<PatientDocument | FuneralDocument | DonationDocument>
+  documents: Array<PatientDocument | FuneralDocument | DonationDocument>,
+  pruneRemovedMedia: boolean = false
 ) {
   const superAdmin = isSuperAdminUser(user);
   const fullAccess = isFullAccessStaffUser(user);
@@ -717,7 +795,7 @@ async function syncMediaSubcollection(
       Boolean(existing)
     );
     if (serialized) {
-      await setDoc(doc(db, collectionPath, parentId, 'media', mediaId), serialized);
+      await setDoc(doc(db, collectionPath, parentId, 'media', mediaId), serialized, { merge: true });
     }
   }
 
@@ -745,14 +823,16 @@ async function syncMediaSubcollection(
       Boolean(existing)
     );
     if (serialized) {
-      await setDoc(doc(db, collectionPath, parentId, 'media', mediaId), serialized);
+      await setDoc(doc(db, collectionPath, parentId, 'media', mediaId), serialized, { merge: true });
     }
   }
 
-  // Clean up removed media items
-  for (const [existingId] of existingMap.entries()) {
-    if (!desiredIds.has(existingId)) {
-      await deleteDoc(doc(db, collectionPath, parentId, 'media', existingId));
+  // Only prune removed attachments when explicitly edited in UI (never during background sync or compacted caches)
+  if (pruneRemovedMedia) {
+    for (const [existingId] of existingMap.entries()) {
+      if (!desiredIds.has(existingId)) {
+        await deleteDoc(doc(db, collectionPath, parentId, 'media', existingId));
+      }
     }
   }
 }
@@ -760,7 +840,8 @@ async function syncMediaSubcollection(
 export async function savePatientToCloud(
   patient: PatientRecord,
   user: User,
-  teamEmails: string[] = []
+  teamEmails: string[] = [],
+  options: { pruneRemovedMedia?: boolean } = {}
 ): Promise<void> {
   const patientId = sanitizeFirestoreId(patient.id, 'pt');
   const patientRef = doc(db, 'patients', patientId);
@@ -772,33 +853,35 @@ export async function savePatientToCloud(
     const existingData = await getExistingServerDocData(patientRef);
     const ownerUid = existingData?.ownerUid || user.uid;
     const parentEmails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
-    const existingCreatedAt =
-      typeof existingData?.createdAt === 'string' && existingData.createdAt.trim()
-        ? existingData.createdAt
-        : patient.createdAt;
+
+    const mergedPatient = existingData
+      ? mergePatientRecordsForUpdate(normalizePatientRecord({ ...existingData, id: patientId }), {
+          ...patient,
+          id: patientId,
+        })
+      : normalizePatientRecord({ ...patient, id: patientId });
 
     const parentPayload = serializePatientParent(
-      {
-        ...patient,
-        id: patientId,
-        createdAt: existingCreatedAt,
-      },
+      mergedPatient,
       ownerUid,
       parentEmails,
       existingData?.serverCreatedAt,
       Boolean(existingData)
     );
 
+    const legacyFlatDoc = hasLegacyFlatKeys(existingData, PATIENT_CANONICAL_KEYS);
+
     // If parent does not exist yet, create parent first so subcollection security rules (exists(parent)) pass
     if (!existingData) {
-      await setDoc(patientRef, parentPayload);
+      await setDoc(patientRef, parentPayload, { merge: true });
     }
 
+    const isCompacted = Boolean((patient as any)._compactStrippedMedia);
     const hasDeliveries = (patient.deliveries?.length || 0) > 0;
     const hasMedia = (patient.photos?.length || 0) > 0 || (patient.documents?.length || 0) > 0;
 
     if (existingData || hasDeliveries) {
-      // Sync deliveries subcollection
+      // Non-destructive upsert of deliveries subcollection (existing deliveries on Cloud are never deleted here)
       const delCol = collection(db, 'patients', patientId, 'deliveries');
       const delQuery = fullAccess
         ? delCol
@@ -807,10 +890,8 @@ export async function savePatientToCloud(
       const existingDelMap = new Map<string, any>();
       existingDelSnap.forEach((d) => existingDelMap.set(d.id, d.data()));
 
-      const desiredDelIds = new Set<string>();
       for (const del of patient.deliveries || []) {
         const delId = sanitizeFirestoreId(del.id, 'del');
-        desiredDelIds.add(delId);
         const prevDel = existingDelMap.get(delId);
         const delEmails = prevDel && !superAdmin ? prevDel.authorizedEmails : desiredEmails;
         const delPayload = await serializeDeliveryDoc(
@@ -821,18 +902,13 @@ export async function savePatientToCloud(
           prevDel?.serverCreatedAt,
           Boolean(prevDel)
         );
-        await setDoc(doc(db, 'patients', patientId, 'deliveries', delId), delPayload);
-      }
-
-      for (const [existingDelId] of existingDelMap.entries()) {
-        if (!desiredDelIds.has(existingDelId)) {
-          await deleteDoc(doc(db, 'patients', patientId, 'deliveries', existingDelId));
-        }
+        await setDoc(doc(db, 'patients', patientId, 'deliveries', delId), delPayload, {
+          merge: true,
+        });
       }
     }
 
-    if (existingData || hasMedia) {
-      // Sync media subcollection (photos + documents)
+    if ((existingData || hasMedia) && !isCompacted) {
       await syncMediaSubcollection(
         'patients',
         patientId,
@@ -840,13 +916,19 @@ export async function savePatientToCloud(
         user,
         desiredEmails,
         patient.photos || [],
-        patient.documents || []
+        patient.documents || [],
+        Boolean(options.pruneRemovedMedia)
       );
     }
 
     // Commit/touch parent AFTER subcollections so remote onSnapshot listeners hydrate complete data
     if (existingData) {
-      await setDoc(patientRef, parentPayload);
+      // Migrate legacy flat docs cleanly into grouped sub-maps without losing fields, else merge
+      if (legacyFlatDoc) {
+        await setDoc(patientRef, parentPayload);
+      } else {
+        await setDoc(patientRef, parentPayload, { merge: true });
+      }
     } else if (hasDeliveries || hasMedia) {
       await updateDoc(patientRef, { serverUpdatedAt: serverTimestamp() });
     }
@@ -887,24 +969,26 @@ export async function saveDeliveryToCloud(
       delData?.serverCreatedAt,
       Boolean(delData)
     );
-    await setDoc(delRef, payload);
+    await setDoc(delRef, payload, { merge: true });
 
-    // Then update parent doc to trigger remote hydration with the committed delivery
+    // Then merge & update parent doc to trigger remote hydration with the committed delivery
     const parentEmails = !superAdmin ? existingData.authorizedEmails : desiredEmails;
-    const existingCreatedAt =
-      typeof existingData.createdAt === 'string' && existingData.createdAt.trim()
-        ? existingData.createdAt
-        : patient.createdAt;
-    await setDoc(
-      patientRef,
-      serializePatientParent(
-        { ...patient, id: patientId, createdAt: existingCreatedAt },
-        existingData.ownerUid || user.uid,
-        parentEmails,
-        existingData.serverCreatedAt,
-        true
-      )
+    const mergedPatient = mergePatientRecordsForUpdate(
+      normalizePatientRecord({ ...existingData, id: patientId }),
+      { ...patient, id: patientId }
     );
+    const parentPayload = serializePatientParent(
+      mergedPatient,
+      existingData.ownerUid || user.uid,
+      parentEmails,
+      existingData.serverCreatedAt,
+      true
+    );
+    if (hasLegacyFlatKeys(existingData, PATIENT_CANONICAL_KEYS)) {
+      await setDoc(patientRef, parentPayload);
+    } else {
+      await setDoc(patientRef, parentPayload, { merge: true });
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `patients/${patientId}/deliveries/${delId}`);
     throw err;
@@ -914,7 +998,8 @@ export async function saveDeliveryToCloud(
 export async function saveFuneralToCloud(
   record: FuneralAssistanceRecord,
   user: User,
-  teamEmails: string[] = []
+  teamEmails: string[] = [],
+  options: { pruneRemovedMedia?: boolean } = {}
 ): Promise<void> {
   const funeralId = sanitizeFirestoreId(record.id, 'funeral');
   const ref = doc(db, 'funerals', funeralId);
@@ -925,17 +1010,16 @@ export async function saveFuneralToCloud(
     const existingData = await getExistingServerDocData(ref);
     const ownerUid = existingData?.ownerUid || user.uid;
     const parentEmails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
-    const existingCreatedAt =
-      typeof existingData?.createdAt === 'string' && existingData.createdAt.trim()
-        ? existingData.createdAt
-        : record.createdAt;
+
+    const mergedRecord = existingData
+      ? mergeFuneralRecordsForUpdate(normalizeFuneralRecord({ ...existingData, id: funeralId }), {
+          ...record,
+          id: funeralId,
+        })
+      : normalizeFuneralRecord({ ...record, id: funeralId });
 
     const parentPayload = serializeFuneralParent(
-      {
-        ...record,
-        id: funeralId,
-        createdAt: existingCreatedAt,
-      },
+      mergedRecord,
       ownerUid,
       parentEmails,
       existingData?.serverCreatedAt,
@@ -943,21 +1027,29 @@ export async function saveFuneralToCloud(
     );
 
     if (!existingData) {
-      await setDoc(ref, parentPayload);
+      await setDoc(ref, parentPayload, { merge: true });
     }
 
-    await syncMediaSubcollection(
-      'funerals',
-      funeralId,
-      user.uid,
-      user,
-      desiredEmails,
-      [],
-      record.documents || []
-    );
+    const isCompacted = Boolean((record as any)._compactStrippedMedia);
+    if (!isCompacted) {
+      await syncMediaSubcollection(
+        'funerals',
+        funeralId,
+        user.uid,
+        user,
+        desiredEmails,
+        [],
+        record.documents || [],
+        Boolean(options.pruneRemovedMedia)
+      );
+    }
 
     if (existingData) {
-      await setDoc(ref, parentPayload);
+      if (hasLegacyFlatKeys(existingData, FUNERAL_CANONICAL_KEYS)) {
+        await setDoc(ref, parentPayload);
+      } else {
+        await setDoc(ref, parentPayload, { merge: true });
+      }
     } else if ((record.documents?.length || 0) > 0) {
       await updateDoc(ref, { serverUpdatedAt: serverTimestamp() });
     }
@@ -989,7 +1081,8 @@ export async function deleteFuneralFromCloud(id: string, user?: User | null): Pr
 export async function saveDonationToCloud(
   record: DonationDistributionRecord,
   user: User,
-  teamEmails: string[] = []
+  teamEmails: string[] = [],
+  options: { pruneRemovedMedia?: boolean } = {}
 ): Promise<void> {
   const donationId = sanitizeFirestoreId(record.id, 'donation');
   const ref = doc(db, 'donations', donationId);
@@ -1000,17 +1093,16 @@ export async function saveDonationToCloud(
     const existingData = await getExistingServerDocData(ref);
     const ownerUid = existingData?.ownerUid || user.uid;
     const parentEmails = existingData && !superAdmin ? existingData.authorizedEmails : desiredEmails;
-    const existingCreatedAt =
-      typeof existingData?.createdAt === 'string' && existingData.createdAt.trim()
-        ? existingData.createdAt
-        : record.createdAt;
+
+    const mergedRecord = existingData
+      ? mergeDonationRecordsForUpdate(normalizeDonationRecord({ ...existingData, id: donationId }), {
+          ...record,
+          id: donationId,
+        })
+      : normalizeDonationRecord({ ...record, id: donationId });
 
     const parentPayload = serializeDonationParent(
-      {
-        ...record,
-        id: donationId,
-        createdAt: existingCreatedAt,
-      },
+      mergedRecord,
       ownerUid,
       parentEmails,
       existingData?.serverCreatedAt,
@@ -1018,21 +1110,29 @@ export async function saveDonationToCloud(
     );
 
     if (!existingData) {
-      await setDoc(ref, parentPayload);
+      await setDoc(ref, parentPayload, { merge: true });
     }
 
-    await syncMediaSubcollection(
-      'donations',
-      donationId,
-      user.uid,
-      user,
-      desiredEmails,
-      record.photos || [],
-      record.documents || []
-    );
+    const isCompacted = Boolean((record as any)._compactStrippedMedia);
+    if (!isCompacted) {
+      await syncMediaSubcollection(
+        'donations',
+        donationId,
+        user.uid,
+        user,
+        desiredEmails,
+        record.photos || [],
+        record.documents || [],
+        Boolean(options.pruneRemovedMedia)
+      );
+    }
 
     if (existingData) {
-      await setDoc(ref, parentPayload);
+      if (hasLegacyFlatKeys(existingData, DONATION_CANONICAL_KEYS)) {
+        await setDoc(ref, parentPayload);
+      } else {
+        await setDoc(ref, parentPayload, { merge: true });
+      }
     } else if ((record.photos?.length || 0) > 0 || (record.documents?.length || 0) > 0) {
       await updateDoc(ref, { serverUpdatedAt: serverTimestamp() });
     }
@@ -1090,11 +1190,13 @@ export async function saveDeliveryPlanSettingsToCloud(
           : safeNum(settings.customRiceCount, 0),
       currentMonth: (settings.currentMonth || '').slice(0, 100),
       updatedAt: (settings.updatedAt || new Date().toISOString()).slice(0, 64),
-      serverCreatedAt: existingData?.serverCreatedAt || serverTimestamp(),
+      serverCreatedAt: isFirestoreTimestampValue(existingData?.serverCreatedAt)
+        ? existingData!.serverCreatedAt
+        : serverTimestamp(),
       serverUpdatedAt: serverTimestamp(),
     });
 
-    await setDoc(ref, payload);
+    await setDoc(ref, payload, { merge: true });
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'settings/delivery_plan');
     throw err;
@@ -1212,16 +1314,20 @@ export async function registerStaffAdminMember(
   const adminRef = doc(db, 'admins', cleanUid);
   try {
     const existingAdmin = await getDoc(adminRef);
-    await setDoc(adminRef, {
-      uid: cleanUid,
-      email: email.trim().toLowerCase().slice(0, 200),
-      displayName: (displayName || email).trim().slice(0, 200),
-      role: 'officer',
-      serverCreatedAt: existingAdmin.exists()
-        ? existingAdmin.data().serverCreatedAt
-        : serverTimestamp(),
-      serverUpdatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      adminRef,
+      {
+        uid: cleanUid,
+        email: email.trim().toLowerCase().slice(0, 200),
+        displayName: (displayName || email).trim().slice(0, 200),
+        role: 'officer',
+        serverCreatedAt: existingAdmin.exists()
+          ? existingAdmin.data().serverCreatedAt
+          : serverTimestamp(),
+        serverUpdatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `admins/${cleanUid}`);
     throw err;
@@ -1290,10 +1396,16 @@ export async function saveWorkspaceAuthorizedEmails(
     ]);
 
     for (const pDoc of pSnap.docs) {
-      await updateDoc(pDoc.ref, {
-        authorizedEmails: normalized,
-        serverUpdatedAt: serverTimestamp(),
-      });
+      const pData = pDoc.data();
+      if (hasLegacyFlatKeys(pData, PATIENT_CANONICAL_KEYS)) {
+        const hydrated = await hydratePatientSafe({ ...pData, id: pDoc.id }, user, undefined, db, true);
+        await savePatientToCloud(hydrated, user, normalized);
+      } else {
+        await updateDoc(pDoc.ref, {
+          authorizedEmails: normalized,
+          serverUpdatedAt: serverTimestamp(),
+        });
+      }
       const [delSnap, mediaSnap] = await Promise.all([
         getDocs(collection(db, 'patients', pDoc.id, 'deliveries')),
         getDocs(collection(db, 'patients', pDoc.id, 'media')),
@@ -1307,10 +1419,16 @@ export async function saveWorkspaceAuthorizedEmails(
     }
 
     for (const fDoc of fSnap.docs) {
-      await updateDoc(fDoc.ref, {
-        authorizedEmails: normalized,
-        serverUpdatedAt: serverTimestamp(),
-      });
+      const fData = fDoc.data();
+      if (hasLegacyFlatKeys(fData, FUNERAL_CANONICAL_KEYS)) {
+        const hydrated = await hydrateFuneral({ ...fData, id: fDoc.id }, user, undefined, db, true);
+        await saveFuneralToCloud(hydrated, user, normalized);
+      } else {
+        await updateDoc(fDoc.ref, {
+          authorizedEmails: normalized,
+          serverUpdatedAt: serverTimestamp(),
+        });
+      }
       const mediaSnap = await getDocs(collection(db, 'funerals', fDoc.id, 'media'));
       for (const m of mediaSnap.docs) {
         await updateDoc(m.ref, { authorizedEmails: normalized, serverUpdatedAt: serverTimestamp() });
@@ -1318,10 +1436,16 @@ export async function saveWorkspaceAuthorizedEmails(
     }
 
     for (const dDoc of dSnap.docs) {
-      await updateDoc(dDoc.ref, {
-        authorizedEmails: normalized,
-        serverUpdatedAt: serverTimestamp(),
-      });
+      const dData = dDoc.data();
+      if (hasLegacyFlatKeys(dData, DONATION_CANONICAL_KEYS)) {
+        const hydrated = await hydrateDonation({ ...dData, id: dDoc.id }, user, undefined, db, true);
+        await saveDonationToCloud(hydrated, user, normalized);
+      } else {
+        await updateDoc(dDoc.ref, {
+          authorizedEmails: normalized,
+          serverUpdatedAt: serverTimestamp(),
+        });
+      }
       const mediaSnap = await getDocs(collection(db, 'donations', dDoc.id, 'media'));
       for (const m of mediaSnap.docs) {
         await updateDoc(m.ref, { authorizedEmails: normalized, serverUpdatedAt: serverTimestamp() });
@@ -1489,222 +1613,8 @@ export async function rejectAccessRequest(
 }
 
 // ============================================================================
-// Read & Hydration Helpers
+// Read & Hydration Helpers (delegated to shared legacy-compatible normalizers)
 // ============================================================================
-
-function normalizeIdAddress(val: unknown): PatientRecord['idAddress'] {
-  const m = asMap(val) || {};
-  return {
-    houseNo: typeof m.houseNo === 'string' ? m.houseNo : String(m.houseNo ?? ''),
-    moo: typeof m.moo === 'string' ? m.moo : '',
-    trok: typeof m.trok === 'string' ? m.trok : '',
-    soi: typeof m.soi === 'string' ? m.soi : '',
-    road: typeof m.road === 'string' ? m.road : '',
-    subdistrict: typeof m.subdistrict === 'string' ? m.subdistrict : '',
-    district: typeof m.district === 'string' ? m.district : 'เมืองสมุทรปราการ',
-    province: typeof m.province === 'string' && m.province ? m.province : 'สมุทรปราการ',
-  };
-}
-
-function normalizeCurrentAddress(val: unknown): PatientRecord['currentAddress'] {
-  const m = asMap(val) || {};
-  return {
-    houseNo: typeof m.houseNo === 'string' ? m.houseNo : String(m.houseNo ?? ''),
-    buildingVillage: typeof m.buildingVillage === 'string' ? m.buildingVillage : '',
-    trok: typeof m.trok === 'string' ? m.trok : '',
-    soi: typeof m.soi === 'string' ? m.soi : '',
-    road: typeof m.road === 'string' ? m.road : '',
-    subdistrict: typeof m.subdistrict === 'string' ? m.subdistrict : '',
-    district: typeof m.district === 'string' ? m.district : 'เมืองสมุทรปราการ',
-    province: typeof m.province === 'string' && m.province ? m.province : 'สมุทรปราการ',
-  };
-}
-
-function normalizeHydratedPatient(
-  raw: Record<string, any>,
-  deliveries: MonthlyDelivery[],
-  photos: PatientPhoto[],
-  documents: PatientDocument[]
-): PatientRecord {
-  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
-  const disabilityMap = asMap(rest.disabilityCard) || {};
-  const dimMap = asMap(rest.dimensionScores) || {};
-  const idAddress = normalizeIdAddress(rest.idAddress);
-  const currentAddress = normalizeCurrentAddress(rest.currentAddress);
-
-  return {
-    ...(rest as PatientRecord),
-    id: String(rest.id || ''),
-    code: String(rest.code || ''),
-    admissionDate: String(rest.admissionDate || ''),
-    status: normalizePatientStatus(rest.status),
-    statusHistory: Array.isArray(rest.statusHistory) ? rest.statusHistory : undefined,
-    nationalId: String(rest.nationalId || ''),
-    title: String(rest.title || ''),
-    fullName: String(rest.fullName || 'ไม่ระบุชื่อ'),
-    age: safeNum(rest.age, 0),
-    gender: rest.gender === 'หญิง' ? 'หญิง' : 'ชาย',
-    phone: String(rest.phone || ''),
-    caregiverName: String(rest.caregiverName || ''),
-    caregiverRelation: String(rest.caregiverRelation || ''),
-    caregiverPhone: String(rest.caregiverPhone || ''),
-    idAddress,
-    isSameAddress: Boolean(rest.isSameAddress),
-    currentAddress,
-    latitude: safeCoord(rest.latitude),
-    longitude: safeCoord(rest.longitude),
-    landmarkNote: String(rest.landmarkNote || ''),
-    googleMapsUrl: String(rest.googleMapsUrl || ''),
-    qrCodeDataUrl: String(rest.qrCodeDataUrl || ''),
-    mobilityLevel: normalizeMobility(rest.mobilityLevel),
-    chronicDiseases: String(rest.chronicDiseases || ''),
-    symptomsDetail: String(rest.symptomsDetail || ''),
-    disabilityCard: {
-      hasCard: Boolean(disabilityMap.hasCard),
-      type: typeof disabilityMap.type === 'string' ? disabilityMap.type : '',
-      cardNumber: typeof disabilityMap.cardNumber === 'string' ? disabilityMap.cardNumber : '',
-    },
-    specialNeeds: Array.isArray(rest.specialNeeds) ? rest.specialNeeds.map(String) : [],
-    familyMembersTotal: safeNum(rest.familyMembersTotal, 0),
-    familyMembersMale: safeNum(rest.familyMembersMale, 0),
-    familyMembersFemale: safeNum(rest.familyMembersFemale, 0),
-    incomeSalary: safeNum(rest.incomeSalary, 0),
-    incomeDisability: safeNum(rest.incomeDisability, 0),
-    incomeElderly: safeNum(rest.incomeElderly, 0),
-    incomeStateWelfare: safeNum(rest.incomeStateWelfare, 0),
-    incomeOther: safeNum(rest.incomeOther, 0),
-    monthlyExpense: safeNum(rest.monthlyExpense, 0),
-    netIncome: safeNum(rest.netIncome, 0),
-    economicNote: String(rest.economicNote || ''),
-    helpCashEnabled: Boolean(rest.helpCashEnabled),
-    helpCashAmount: safeNum(rest.helpCashAmount, 0),
-    helpDiaperSize: normalizeDiaperSize(rest.helpDiaperSize),
-    helpDiaperPacks: safeNum(rest.helpDiaperPacks, 0),
-    helpRicePacks: safeNum(rest.helpRicePacks, 0),
-    helpWaterSize: normalizeWaterSize(rest.helpWaterSize),
-    helpWaterPacks: safeNum(rest.helpWaterPacks, 0),
-    helpOtherSupplies: String(rest.helpOtherSupplies || ''),
-    vulnerabilityScore: safeNum(rest.vulnerabilityScore, 0),
-    vulnerabilityLevel: String(rest.vulnerabilityLevel || ''),
-    dimensionScores: {
-      mobilityScore: safeNum(dimMap.mobilityScore, 0),
-      complicationsScore: safeNum(dimMap.complicationsScore, 0),
-      economicScore: safeNum(dimMap.economicScore, 0),
-      caregiverScore: safeNum(dimMap.caregiverScore, 0),
-    },
-    socialWorkerOpinion: String(rest.socialWorkerOpinion || ''),
-    aiSuggestions: String(rest.aiSuggestions || ''),
-    interviewerName: String(rest.interviewerName || ''),
-    interviewerPosition: String(rest.interviewerPosition || ''),
-    approverName: String(rest.approverName || ''),
-    approverPosition: String(rest.approverPosition || ''),
-    presidentName: String(rest.presidentName || ''),
-    presidentPosition: String(rest.presidentPosition || ''),
-    deliveries,
-    photos,
-    documents,
-    createdAt: String(rest.createdAt || ''),
-    updatedAt: String(rest.updatedAt || rest.createdAt || ''),
-  };
-}
-
-function normalizeHydratedFuneral(
-  raw: Record<string, any>,
-  documents: FuneralDocument[]
-): FuneralAssistanceRecord {
-  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
-  const safeStatus =
-    rest.status === 'pending' ||
-    rest.status === 'approved' ||
-    rest.status === 'completed' ||
-    rest.status === 'rejected'
-      ? rest.status
-      : 'pending';
-  return {
-    ...(rest as FuneralAssistanceRecord),
-    id: String(rest.id || ''),
-    code: String(rest.code || ''),
-    applicationDate: String(rest.applicationDate || ''),
-    status: safeStatus,
-    deceasedTitle: String(rest.deceasedTitle || ''),
-    deceasedName: String(rest.deceasedName || 'ไม่ระบุชื่อ'),
-    deceasedNationalId: String(rest.deceasedNationalId || ''),
-    deceasedAge: safeNum(rest.deceasedAge, 0),
-    deceasedDeathDate: String(rest.deceasedDeathDate || ''),
-    deceasedDeathTime: String(rest.deceasedDeathTime || ''),
-    causeOfDeath: String(rest.causeOfDeath || ''),
-    deathPlace: String(rest.deathPlace || ''),
-    deceasedAddress: String(rest.deceasedAddress || ''),
-    applicantTitle: String(rest.applicantTitle || ''),
-    applicantName: String(rest.applicantName || 'ไม่ระบุชื่อ'),
-    applicantNationalId: String(rest.applicantNationalId || ''),
-    applicantPhone: String(rest.applicantPhone || ''),
-    applicantRelation: String(rest.applicantRelation || ''),
-    applicantAddress: String(rest.applicantAddress || ''),
-    applicantPovertyReason: String(rest.applicantPovertyReason || ''),
-    templeName: String(rest.templeName || ''),
-    cremationDate: String(rest.cremationDate || ''),
-    cremationTime: String(rest.cremationTime || ''),
-    assistanceAmount: safeNum(rest.assistanceAmount, 0),
-    coffinProvided: Boolean(rest.coffinProvided),
-    transportProvided: Boolean(rest.transportProvided),
-    shroudClothProvided: Boolean(rest.shroudClothProvided),
-    otherItems: String(rest.otherItems || ''),
-    officerId: String(rest.officerId || ''),
-    officerName: String(rest.officerName || ''),
-    officerPosition: String(rest.officerPosition || ''),
-    approverName: String(rest.approverName || ''),
-    approverPosition: String(rest.approverPosition || ''),
-    documents,
-    createdAt: String(rest.createdAt || ''),
-    updatedAt: String(rest.updatedAt || rest.createdAt || ''),
-  };
-}
-
-function normalizeHydratedDonation(
-  raw: Record<string, any>,
-  photos: DonationPhoto[],
-  documents: DonationDocument[]
-): DonationDistributionRecord {
-  const { serverCreatedAt: _sc, serverUpdatedAt: _su, ownerUid: _ou, authorizedEmails: _ae, ...rest } = raw;
-  const safeStatus =
-    rest.status === 'completed' || rest.status === 'pending' || rest.status === 'cancelled'
-      ? rest.status
-      : 'completed';
-  const safeRecipientType =
-    rest.recipientType === 'individual' || rest.recipientType === 'government'
-      ? rest.recipientType
-      : 'individual';
-  return {
-    ...(rest as DonationDistributionRecord),
-    id: String(rest.id || ''),
-    code: String(rest.code || ''),
-    distributionDate: String(rest.distributionDate || ''),
-    status: safeStatus,
-    recipientType: safeRecipientType,
-    waterPacks: safeNum(rest.waterPacks, 0),
-    waterUnit: String(rest.waterUnit || 'แพ็ค'),
-    dryFoodCount: safeNum(rest.dryFoodCount, 0),
-    dryFoodUnit: String(rest.dryFoodUnit || 'ชุด'),
-    riceBags: safeNum(rest.riceBags, 0),
-    riceKg: safeNum(rest.riceKg, 0),
-    diaperPacks: safeNum(rest.diaperPacks, 0),
-    diaperSize: String(rest.diaperSize || ''),
-    otherItems: Array.isArray(rest.otherItems) ? rest.otherItems : [],
-    notes: String(rest.notes || ''),
-    handoverPlace: String(rest.handoverPlace || ''),
-    deliveryMethod: String(rest.deliveryMethod || ''),
-    officerId: String(rest.officerId || ''),
-    officerName: String(rest.officerName || ''),
-    officerPosition: String(rest.officerPosition || ''),
-    approverName: String(rest.approverName || ''),
-    approverPosition: String(rest.approverPosition || ''),
-    photos,
-    documents,
-    createdAt: String(rest.createdAt || ''),
-    updatedAt: String(rest.updatedAt || rest.createdAt || ''),
-  };
-}
 
 async function hydratePatient(
   raw: Record<string, any>,
@@ -1805,7 +1715,7 @@ async function hydratePatient(
     documents = fallbackLocal.documents || [];
   }
 
-  return normalizeHydratedPatient(raw, deliveries, photos, documents);
+  return normalizePatientRecord(raw, deliveries, photos, documents);
 }
 
 async function hydratePatientSafe(
@@ -1819,7 +1729,7 @@ async function hydratePatientSafe(
     return await hydratePatient(raw, user, fallbackLocal, sourceDb, preferServer);
   } catch (err) {
     console.warn(`Safe hydration fallback for patient ${raw?.id}:`, err);
-    return normalizeHydratedPatient(
+    return normalizePatientRecord(
       raw,
       fallbackLocal?.deliveries || [],
       fallbackLocal?.photos || [],
@@ -1872,7 +1782,7 @@ async function hydrateFuneral(
     documents = fallbackLocal.documents;
   }
 
-  return normalizeHydratedFuneral(raw, documents);
+  return normalizeFuneralRecord(raw, documents);
 }
 
 async function hydrateDonation(
@@ -1929,7 +1839,7 @@ async function hydrateDonation(
     documents = fallbackLocal.documents || [];
   }
 
-  return normalizeHydratedDonation(raw, photos, documents);
+  return normalizeDonationRecord(raw, photos, documents);
 }
 
 export interface CloudErrorDetail {
@@ -2181,10 +2091,15 @@ export async function syncLocalRecordsToCloud(
     cloudPatientTimes.set(d.id, Date.parse(data.updatedAt || data.createdAt || '') || 0);
     if (superAdmin && emailsNeedBackfill(data.authorizedEmails, normalizedTeamEmails)) {
       try {
-        await updateDoc(d.ref, {
-          authorizedEmails: normalizedTeamEmails,
-          serverUpdatedAt: serverTimestamp(),
-        });
+        if (hasLegacyFlatKeys(data, PATIENT_CANONICAL_KEYS)) {
+          const hydrated = await hydratePatientSafe({ ...data, id: d.id }, user, undefined, db, true);
+          await savePatientToCloud(hydrated, user, normalizedTeamEmails);
+        } else {
+          await updateDoc(d.ref, {
+            authorizedEmails: normalizedTeamEmails,
+            serverUpdatedAt: serverTimestamp(),
+          });
+        }
         const [delSnap, mediaSnap] = await Promise.all([
           getDocs(collection(db, 'patients', d.id, 'deliveries')),
           getDocs(collection(db, 'patients', d.id, 'media')),
@@ -2246,10 +2161,15 @@ export async function syncLocalRecordsToCloud(
     cloudFuneralTimes.set(d.id, Date.parse(data.updatedAt || data.createdAt || '') || 0);
     if (superAdmin && emailsNeedBackfill(data.authorizedEmails, normalizedTeamEmails)) {
       try {
-        await updateDoc(d.ref, {
-          authorizedEmails: normalizedTeamEmails,
-          serverUpdatedAt: serverTimestamp(),
-        });
+        if (hasLegacyFlatKeys(data, FUNERAL_CANONICAL_KEYS)) {
+          const hydrated = await hydrateFuneral({ ...data, id: d.id }, user, undefined, db, true);
+          await saveFuneralToCloud(hydrated, user, normalizedTeamEmails);
+        } else {
+          await updateDoc(d.ref, {
+            authorizedEmails: normalizedTeamEmails,
+            serverUpdatedAt: serverTimestamp(),
+          });
+        }
         const mediaSnap = await getDocs(collection(db, 'funerals', d.id, 'media'));
         for (const sub of mediaSnap.docs) {
           if (emailsNeedBackfill(sub.data().authorizedEmails, normalizedTeamEmails)) {
@@ -2301,10 +2221,15 @@ export async function syncLocalRecordsToCloud(
     cloudDonationTimes.set(d.id, Date.parse(data.updatedAt || data.createdAt || '') || 0);
     if (superAdmin && emailsNeedBackfill(data.authorizedEmails, normalizedTeamEmails)) {
       try {
-        await updateDoc(d.ref, {
-          authorizedEmails: normalizedTeamEmails,
-          serverUpdatedAt: serverTimestamp(),
-        });
+        if (hasLegacyFlatKeys(data, DONATION_CANONICAL_KEYS)) {
+          const hydrated = await hydrateDonation({ ...data, id: d.id }, user, undefined, db, true);
+          await saveDonationToCloud(hydrated, user, normalizedTeamEmails);
+        } else {
+          await updateDoc(d.ref, {
+            authorizedEmails: normalizedTeamEmails,
+            serverUpdatedAt: serverTimestamp(),
+          });
+        }
         const mediaSnap = await getDocs(collection(db, 'donations', d.id, 'media'));
         for (const sub of mediaSnap.docs) {
           if (emailsNeedBackfill(sub.data().authorizedEmails, normalizedTeamEmails)) {
