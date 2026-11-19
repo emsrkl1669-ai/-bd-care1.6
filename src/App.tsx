@@ -60,6 +60,9 @@ import {
   clearAllKnownSyncedIds,
   getStoredLastAuthUid,
   saveStoredLastAuthUid,
+  getDismissedSeedIds,
+  markDismissedSeedId,
+  clearDismissedSeedId,
 } from './utils/storage';
 import {
   normalizeDonationRecord,
@@ -105,6 +108,7 @@ import {
   mergeRecordsNonDestructively,
   reconcileWithCloudSnapshot,
   savePatientToCloud,
+  deletePatientFromCloud,
   saveDeliveryToCloud,
   saveFuneralToCloud,
   deleteFuneralFromCloud,
@@ -303,6 +307,7 @@ function AppContent() {
             pendingAtBoot.upserts.funerals.length > 0 ||
             pendingAtBoot.upserts.donations.length > 0 ||
             pendingAtBoot.upserts.deliverySettings ||
+            pendingAtBoot.deletes.patients.length > 0 ||
             pendingAtBoot.deletes.funerals.length > 0 ||
             pendingAtBoot.deletes.donations.length > 0;
 
@@ -314,7 +319,7 @@ function AppContent() {
                 initialServerSnapshot.patients,
                 patientsRef.current,
                 new Set(pendingAtBoot.upserts.patients),
-                new Set(),
+                new Set(pendingAtBoot.deletes.patients),
                 new Set(latestKnown.patients),
                 true,
                 false
@@ -363,7 +368,7 @@ function AppContent() {
             authorizedEmailsRef.current = initialServerSnapshot.authorizedEmails;
 
             // Seed missing CSV records only if they are missing from Cloud
-            const seedCheck = mergeSeedPatientsIfMissing(mergedPatients);
+            const seedCheck = mergeSeedPatientsIfMissing(mergedPatients, getDismissedSeedIds());
             if (seedCheck.added.length > 0) {
               const addedWithQr = await attachQrCodesToPatients(seedCheck.added);
               if (cancelled) return;
@@ -409,7 +414,11 @@ function AppContent() {
             const recoveryPatients = getRecoveryPatients();
             if (recoveryPatients.length > 0) {
               const mergedLocalPatients = sortPatientsByCodeAsc(
-                mergeRecordsNonDestructively(recoveryPatients, patientsRef.current)
+                mergeRecordsNonDestructively(
+                  recoveryPatients,
+                  patientsRef.current,
+                  new Set(pendingDeletes.patients)
+                )
               );
               patientsRef.current = mergedLocalPatients;
               setPatients(mergedLocalPatients);
@@ -443,7 +452,11 @@ function AppContent() {
             if (legacyRecovery.recoveredCount > 0) {
               if (legacyRecovery.recoveredPatients.length > 0) {
                 const nextP = sortPatientsByCodeAsc(
-                  mergeRecordsNonDestructively(legacyRecovery.recoveredPatients, patientsRef.current)
+                  mergeRecordsNonDestructively(
+                    legacyRecovery.recoveredPatients,
+                    patientsRef.current,
+                    new Set(pendingDeletes.patients)
+                  )
                 );
                 patientsRef.current = nextP;
                 setPatients(nextP);
@@ -471,7 +484,7 @@ function AppContent() {
               }
             }
 
-            const seedCheck = mergeSeedPatientsIfMissing(patientsRef.current);
+            const seedCheck = mergeSeedPatientsIfMissing(patientsRef.current, getDismissedSeedIds());
             if (seedCheck.added.length > 0) {
               const addedWithQr = await attachQrCodesToPatients(seedCheck.added);
               if (cancelled) return;
@@ -508,7 +521,7 @@ function AppContent() {
                 refreshedServer.patients,
                 patientsRef.current,
                 new Set(latestPending.upserts.patients),
-                new Set(),
+                new Set(latestPending.deletes.patients),
                 new Set(latestKnown.patients),
                 true,
                 false
@@ -591,6 +604,7 @@ function AppContent() {
             const pending = getPendingOps();
             const known = getKnownSyncedIds();
             const pendingUpsertSet = new Set(pending.upserts.patients);
+            const pendingDeleteSet = new Set(pending.deletes.patients);
 
             setPatients((prevLocal) => {
               const next = sortPatientsByCodeAsc(
@@ -598,7 +612,7 @@ function AppContent() {
                   cloudPatients,
                   prevLocal,
                   pendingUpsertSet,
-                  new Set(),
+                  pendingDeleteSet,
                   new Set(known.patients),
                   !fromCache,
                   false
@@ -1003,7 +1017,7 @@ function AppContent() {
           serverSnapshot.patients,
           patientsRef.current,
           new Set(latestPending.upserts.patients),
-          new Set(),
+          new Set(latestPending.deletes.patients),
           new Set(latestKnown.patients),
           true,
           false
@@ -1049,7 +1063,7 @@ function AppContent() {
       }
 
       let finalNextPatients = nextPatients;
-      const seedCheck = mergeSeedPatientsIfMissing(nextPatients);
+      const seedCheck = mergeSeedPatientsIfMissing(nextPatients, getDismissedSeedIds());
       let seedUploadCount = 0;
       let seedFailCount = 0;
       if (seedCheck.added.length > 0) {
@@ -1252,6 +1266,10 @@ function AppContent() {
       createdAt: savedPatient.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    clearPendingDelete('patients', savedPatient.id);
+    clearPendingDelete('patients', safeId);
+    clearDismissedSeedId(savedPatient.id);
+    clearDismissedSeedId(safeId);
     markPendingUpsert('patients', safeId);
 
     const existsIndex = patientsRef.current.findIndex(
@@ -1396,6 +1414,46 @@ function AppContent() {
         });
     }
     showToast('กู้คืนผู้ป่วยกลับเข้าสู่โครงการเรียบร้อยแล้ว', 'success');
+  };
+
+  // Delete a patient record from local state & Cloud Firestore
+  const handleDeletePatient = (patientId: string) => {
+    const safeId = sanitizeFirestoreId(patientId, 'pt');
+    clearPendingUpsert('patients', patientId);
+    clearPendingUpsert('patients', safeId);
+    markPendingDelete('patients', patientId);
+    markPendingDelete('patients', safeId);
+    markDismissedSeedId(patientId);
+    markDismissedSeedId(safeId);
+
+    const updatedPatients = sortPatientsByCodeAsc(
+      patientsRef.current.filter((p) => p.id !== patientId && p.id !== safeId)
+    );
+    setPatients(updatedPatients);
+    patientsRef.current = updatedPatients;
+    saveExactStoredPatients(updatedPatients);
+
+    if (editingPatient && (editingPatient.id === patientId || editingPatient.id === safeId)) {
+      setEditingPatient(null);
+    }
+
+    if (firebaseUser) {
+      setCloudStatus('syncing');
+      deletePatientFromCloud(patientId, firebaseUser)
+        .then(() => {
+          clearPendingDelete('patients', patientId);
+          clearPendingDelete('patients', safeId);
+          removeKnownSyncedId('patients', patientId);
+          removeKnownSyncedId('patients', safeId);
+          setCloudStatus('synced');
+          setCloudErrorReason(null);
+        })
+        .catch(() => {
+          setCloudStatus('error');
+          showToast('ลบในเครื่องแล้ว (รออัปเดตการลบบน Cloud เมื่อเชื่อมต่อสำเร็จ)', 'warning');
+        });
+    }
+    showToast('ลบข้อมูลผู้ป่วยเรียบร้อยแล้ว', 'info');
   };
 
   // Record a monthly delivery
@@ -1639,7 +1697,11 @@ function AppContent() {
       });
 
       const withQr = await attachQrCodesToPatients(dedupedImported);
-      withQr.forEach((p) => markPendingUpsert('patients', p.id));
+      withQr.forEach((p) => {
+        clearPendingDelete('patients', p.id);
+        clearDismissedSeedId(p.id);
+        markPendingUpsert('patients', p.id);
+      });
       nextPatients = sortPatientsByCodeAsc(
         mergeRecordsNonDestructively(withQr, patientsRef.current)
       );
@@ -2175,6 +2237,7 @@ function AppContent() {
             donations={donations}
             onEditPatient={handleStartEdit}
             onArchivePatient={handleArchivePatient}
+            onDeletePatient={handleDeletePatient}
             onAddNew={() => {
               setEditingPatient(null);
               setCurrentTab('new');

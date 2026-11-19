@@ -29,6 +29,7 @@ const KNOWN_SYNCED_KEY = 'bdcare_known_synced_v1';
 const KNOWN_SYNCED_SCOPE = `${firebaseConfig.projectId}:${firebaseConfig.firestoreDatabaseId || '(default)'}`;
 const AUTHORIZED_EMAILS_KEY = 'bdcare_authorized_emails_v1';
 const LAST_AUTH_UID_KEY = 'bdcare_last_auth_uid_v1';
+const DISMISSED_SEED_KEY = 'bdcare_dismissed_seed_ids_v1';
 
 // Empty default list - demo data removed per user request
 export const INITIAL_DEMO_PATIENTS: PatientRecord[] = [];
@@ -870,6 +871,44 @@ export function saveStoredLastAuthUid(uid: string | null): void {
       localStorage.removeItem(LAST_AUTH_UID_KEY);
     } else {
       localStorage.setItem(LAST_AUTH_UID_KEY, uid);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getDismissedSeedIds(): string[] {
+  try {
+    const raw = localStorage.getItem(DISMISSED_SEED_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function markDismissedSeedId(id: string): void {
+  if (!id) return;
+  try {
+    const current = getDismissedSeedIds();
+    if (!current.includes(id)) {
+      localStorage.setItem(DISMISSED_SEED_KEY, JSON.stringify([...current, id]));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearDismissedSeedId(id: string): void {
+  if (!id) return;
+  try {
+    const current = getDismissedSeedIds();
+    if (current.includes(id)) {
+      localStorage.setItem(
+        DISMISSED_SEED_KEY,
+        JSON.stringify(current.filter((x) => x !== id))
+      );
     }
   } catch {
     /* ignore */

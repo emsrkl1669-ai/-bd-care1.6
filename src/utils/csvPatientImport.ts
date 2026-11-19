@@ -564,10 +564,14 @@ export function getSeededCsvPatients(): PatientRecord[] {
  * matches by id, normalized patient code (e.g. BDC69003), or 13-digit nationalId
  * so existing/edited Cloud patients (including 001/002) are NEVER duplicated or overwritten.
  */
-export function mergeSeedPatientsIfMissing(existing: PatientRecord[]): {
+export function mergeSeedPatientsIfMissing(
+  existing: PatientRecord[],
+  dismissedIds: string[] = []
+): {
   merged: PatientRecord[];
   added: PatientRecord[];
 } {
+  const dismissedSet = new Set(dismissedIds);
   const existingIds = new Set<string>();
   const existingCodes = new Set<string>();
   const existingNatIds = new Set<string>();
@@ -584,6 +588,7 @@ export function mergeSeedPatientsIfMissing(existing: PatientRecord[]): {
   const added: PatientRecord[] = [];
 
   for (const seed of seeds) {
+    if (dismissedSet.has(seed.id)) continue;
     const seedCodeKey = normalizePatientCodeKey(seed.code);
     const seedNidKey = cleanDigitsKey(seed.nationalId);
     const alreadyExists =

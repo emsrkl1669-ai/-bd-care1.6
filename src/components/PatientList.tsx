@@ -20,6 +20,7 @@ import {
   Upload,
   Download,
   FileSpreadsheet,
+  Trash2,
 } from 'lucide-react';
 import {
   PatientRecord,
@@ -71,6 +72,7 @@ interface PatientListProps {
   donations?: DonationDistributionRecord[];
   onEditPatient: (patient: PatientRecord) => void;
   onArchivePatient: (patientId: string, newStatus: PatientStatus, reason: string) => void;
+  onDeletePatient?: (patientId: string) => void;
   onAddNew?: () => void;
   onManualCloudSync?: () => void;
   onImportBackup?: (
@@ -87,12 +89,13 @@ export const PatientList: React.FC<PatientListProps> = ({
   donations = [],
   onEditPatient,
   onArchivePatient,
+  onDeletePatient,
   onAddNew,
   onManualCloudSync,
   onImportBackup,
   currentAdmin,
 }) => {
-  const { showToast } = useUiFeedback();
+  const { showToast, confirmDialog } = useUiFeedback();
   const restoreFileRef = React.useRef<HTMLInputElement>(null);
   const toolbarImportRef = React.useRef<HTMLInputElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -176,6 +179,20 @@ export const PatientList: React.FC<PatientListProps> = ({
     onArchivePatient(archiveTarget.id, archiveStatusType, archiveReason.trim());
     setArchiveTarget(null);
     setArchiveReason('');
+  };
+
+  const handleConfirmDeletePatient = async (patient: PatientRecord) => {
+    if (!onDeletePatient) return;
+    const ok = await confirmDialog({
+      title: 'ยืนยันการลบข้อมูลผู้ป่วย',
+      message: `คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลของ "${patient.title || ''}${patient.fullName}" (${patient.code}) ออกจากระบบและฐานข้อมูล Cloud?`,
+      confirmLabel: 'ลบข้อมูล',
+      cancelLabel: 'ยกเลิก',
+      variant: 'danger',
+    });
+    if (ok) {
+      onDeletePatient(patient.id);
+    }
   };
 
   return (
@@ -382,7 +399,7 @@ export const PatientList: React.FC<PatientListProps> = ({
                     <th className="py-2.5 px-3">ที่อยู่ (อำเภอ)</th>
                     <th className="py-2.5 px-3">สิ่งของช่วยเหลือประจำเดือน</th>
                     <th className="py-2.5 px-3 w-20 text-center">ความเปราะบาง</th>
-                    <th className="py-2.5 px-3 w-48 text-center">จัดการ / พิมพ์</th>
+                    <th className="py-2.5 px-3 w-56 text-center">จัดการ / พิมพ์</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -522,6 +539,16 @@ export const PatientList: React.FC<PatientListProps> = ({
                             <Edit3 className="w-3 h-3" />
                             แก้ไข
                           </button>
+                          {onDeletePatient && (
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmDeletePatient(patient)}
+                              className="p-1.5 text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 rounded-md transition cursor-pointer"
+                              title="ลบข้อมูลผู้ป่วย"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -681,11 +708,21 @@ export const PatientList: React.FC<PatientListProps> = ({
                       <button
                         type="button"
                         onClick={() => onEditPatient(patient)}
-                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-semibold flex items-center gap-1"
+                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                       >
                         <Edit3 className="w-3 h-3" />
                         แก้ไข
                       </button>
+                      {onDeletePatient && (
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmDeletePatient(patient)}
+                          className="p-1.5 text-red-600 hover:bg-red-50 border border-red-200 rounded transition cursor-pointer"
+                          title="ลบข้อมูลผู้ป่วย"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -938,6 +938,36 @@ export async function savePatientToCloud(
   }
 }
 
+export async function deletePatientFromCloud(id: string, user?: User | null): Promise<void> {
+  const patientId = sanitizeFirestoreId(id, 'pt');
+  const fullAccess = !user || isFullAccessStaffUser(user);
+  const userEmail = (user?.email || '').toLowerCase();
+  try {
+    const delCol = collection(db, 'patients', patientId, 'deliveries');
+    const delQuery = fullAccess
+      ? delCol
+      : query(delCol, where('authorizedEmails', 'array-contains', userEmail));
+    const delSnap = await getDocs(delQuery);
+    for (const d of delSnap.docs) {
+      await deleteDoc(doc(db, 'patients', patientId, 'deliveries', d.id));
+    }
+
+    const mediaCol = collection(db, 'patients', patientId, 'media');
+    const mediaQuery = fullAccess
+      ? mediaCol
+      : query(mediaCol, where('authorizedEmails', 'array-contains', userEmail));
+    const mediaSnap = await getDocs(mediaQuery);
+    for (const d of mediaSnap.docs) {
+      await deleteDoc(doc(db, 'patients', patientId, 'media', d.id));
+    }
+
+    await deleteDoc(doc(db, 'patients', patientId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `patients/${patientId}`);
+    throw err;
+  }
+}
+
 export async function saveDeliveryToCloud(
   patient: PatientRecord,
   delivery: MonthlyDelivery,
@@ -2043,6 +2073,17 @@ export async function syncLocalRecordsToCloud(
   const knownSynced = getKnownSyncedIds();
 
   // 1. Flush pending deletes first so deleted records don't get re-uploaded
+  for (const id of pendingOps.deletes.patients) {
+    try {
+      await deletePatientFromCloud(id, user);
+      clearPendingDelete('patients', id);
+      removeKnownSyncedId('patients', id);
+      deleted++;
+    } catch (err) {
+      failed++;
+      console.warn(`Pending patient delete ${id} failed:`, err);
+    }
+  }
   for (const id of pendingOps.deletes.funerals) {
     try {
       await deleteFuneralFromCloud(id, user);
@@ -2128,13 +2169,14 @@ export async function syncLocalRecordsToCloud(
 
   const uploadedPatientIds: string[] = [];
   const pendingPatientSet = new Set(pendingOps.upserts.patients);
+  const pendingPatientDeleteSet = new Set(pendingOps.deletes.patients);
   for (const pt of localPatients) {
     const safeId = sanitizeFirestoreId(pt.id, 'pt');
+    if (pendingPatientDeleteSet.has(pt.id) || pendingPatientDeleteSet.has(safeId)) continue;
     const localTime = Date.parse(pt.updatedAt || pt.createdAt || '') || Date.now();
     const cloudTime = cloudPatientTimes.get(safeId);
     const isPending = pendingPatientSet.has(pt.id) || pendingPatientSet.has(safeId);
 
-    // BD-Care never deletes patients (only archives via status), so any patient missing from Cloud must always upload
     const shouldUpload =
       isPending ||
       cloudTime === undefined ||
