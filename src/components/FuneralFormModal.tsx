@@ -304,8 +304,8 @@ export const FuneralFormModal: React.FC<FuneralFormModalProps> = ({
                     <ThaiDateInput
                       value={formData.deceasedDeathDate || ''}
                       onChange={(val) => handleChange('deceasedDeathDate', val)}
-                      minYearBE={2540}
-                      maxYearBE={new Date().getFullYear() + 543}
+                      minYearBE={new Date().getFullYear() + 543 - 80}
+                      maxYearBE={new Date().getFullYear() + 543 + 90}
                     />
                   </div>
 
